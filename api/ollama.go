@@ -10,41 +10,20 @@ import (
 )
 
 const (
-	OllamaURL   = "http://localhost:11434/api/chat"
+	OllamaURL   = "http://localhost:11434/v1/chat/completions"
 	OllamaModel = "gpt-oss:20b"
 )
 
-type OllamaClient struct {
+type LocalOllamaClient struct {
 	httpClient *http.Client
 	baseURL    string
 	model      string
 }
 
-type OllamaMessage struct {
-	Role      string     `json:"role"`
-	Content   string     `json:"content"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-}
+// Using OpenAI-compatible endpoint, so we reuse existing ChatRequest and ChatResponse structs
 
-type OllamaRequest struct {
-	Model    string                 `json:"model"`
-	Messages []OllamaMessage        `json:"messages"`
-	Tools    []Tool                 `json:"tools,omitempty"`
-	Stream   bool                   `json:"stream"`
-	Options  map[string]interface{} `json:"options,omitempty"`
-}
-
-type OllamaResponse struct {
-	Model     string        `json:"model"`
-	CreatedAt string        `json:"created_at"`
-	Message   OllamaMessage `json:"message"`
-	Done      bool          `json:"done"`
-	// Note: Ollama doesn't provide token usage stats like DeepInfra
-	// We'll need to estimate or skip this feature for local models
-}
-
-func NewOllamaClient() (*OllamaClient, error) {
-	return &OllamaClient{
+func NewOllamaClient() (*LocalOllamaClient, error) {
+	return &LocalOllamaClient{
 		httpClient: &http.Client{
 			Timeout: 300 * time.Second, // Longer timeout for local inference
 		},
@@ -53,33 +32,22 @@ func NewOllamaClient() (*OllamaClient, error) {
 	}, nil
 }
 
-func (c *OllamaClient) SendChatRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error) {
-	// Convert our Message format to OllamaMessage format
-	ollamaMessages := make([]OllamaMessage, len(messages))
-	for i, msg := range messages {
-		ollamaMessages[i] = OllamaMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		}
+func (c *LocalOllamaClient) SendChatRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error) {
+	// Create a request compatible with Ollama's OpenAI endpoint
+	req := map[string]interface{}{
+		"model":      c.model,
+		"messages":   messages,
+		"max_tokens": 4000,
 	}
 
-	options := make(map[string]interface{})
+	// Add tools if provided
+	if len(tools) > 0 {
+		req["tools"] = tools
+	}
 
-	// Set reasoning effort for gpt-oss models
+	// Add reasoning effort if provided (Ollama uses reasoning_effort, not reasoning)
 	if reasoning != "" {
-		options["reasoning_effort"] = reasoning
-	}
-
-	// Set temperature and other params
-	options["temperature"] = 0.7
-	options["top_p"] = 0.9
-
-	req := OllamaRequest{
-		Model:    c.model,
-		Messages: ollamaMessages,
-		Tools:    tools,
-		Stream:   false,
-		Options:  options,
+		req["reasoning_effort"] = reasoning
 	}
 
 	reqBody, err := json.Marshal(req)
@@ -110,50 +78,18 @@ func (c *OllamaClient) SendChatRequest(messages []Message, tools []Tool, reasoni
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	var ollamaResp OllamaResponse
-	if err := json.Unmarshal(body, &ollamaResp); err != nil {
+	var chatResp ChatResponse
+	if err := json.Unmarshal(body, &chatResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	// Convert Ollama response to our ChatResponse format
-	chatResp := &ChatResponse{
-		ID:      "ollama-" + time.Now().Format("20060102150405"),
-		Object:  "chat.completion",
-		Created: time.Now().Unix(),
-		Model:   c.model,
-		Choices: []Choice{
-			{
-				Index: 0,
-				Message: struct {
-					Role      string     `json:"role"`
-					Content   string     `json:"content"`
-					ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-				}{
-					Role:      ollamaResp.Message.Role,
-					Content:   ollamaResp.Message.Content,
-					ToolCalls: ollamaResp.Message.ToolCalls,
-				},
-				FinishReason: "stop",
-			},
-		},
-		Usage: struct {
-			PromptTokens     int     `json:"prompt_tokens"`
-			CompletionTokens int     `json:"completion_tokens"`
-			TotalTokens      int     `json:"total_tokens"`
-			EstimatedCost    float64 `json:"estimated_cost"`
-		}{
-			// Ollama doesn't provide token counts, so we estimate
-			PromptTokens:     len(reqBody) / 4, // Rough estimate: 4 chars per token
-			CompletionTokens: len(ollamaResp.Message.Content) / 4,
-			TotalTokens:      (len(reqBody) + len(ollamaResp.Message.Content)) / 4,
-			EstimatedCost:    0.0, // Local inference is free!
-		},
-	}
+	// Set cost to 0 for local inference
+	chatResp.Usage.EstimatedCost = 0.0
 
-	return chatResp, nil
+	return &chatResp, nil
 }
 
-func (c *OllamaClient) CheckConnection() error {
+func (c *LocalOllamaClient) CheckConnection() error {
 	// Check if Ollama is running and gpt-oss model is available
 	checkURL := "http://localhost:11434/api/tags"
 
@@ -198,6 +134,6 @@ func (c *OllamaClient) CheckConnection() error {
 	return nil
 }
 
-func (c *OllamaClient) SetModel(model string) {
+func (c *LocalOllamaClient) SetModel(model string) {
 	c.model = model
 }

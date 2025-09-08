@@ -13,7 +13,7 @@ echo "✅ Go is installed: $(go version)"
 # Check file structure
 echo ""
 echo "📁 Checking file structure..."
-FILES=("main.go" "go.mod" "api/client.go" "agent/agent.go" "tools/shell.go" "tools/read.go" "tools/write.go" "tools/edit.go" "systematic_exploration_prompt.md")
+FILES=("main.go" "go.mod" "api/client.go" "agent/agent.go" "tools/shell.go" "tools/read.go" "tools/write.go" "tools/edit.go")
 
 for file in "${FILES[@]}"; do
     if [ -f "$file" ]; then
@@ -55,13 +55,13 @@ else
     exit 1
 fi
 
-# Check API client (without token)
+# Check API client initialization  
 echo ""
-echo "🌐 Testing API client error handling..."
-if echo "test" | timeout 3 ./gpt-chat 2>&1 | grep -q "DEEPINFRA_API_KEY"; then
-    echo "✅ API client correctly detects missing token"
+echo "🌐 Testing API client initialization..."
+if echo "test" | timeout 3 ./gpt-chat 2>&1 | grep -q "GPT-OSS Chat Agent initialized successfully"; then
+    echo "✅ API client initializes correctly"
 else
-    echo "❌ API client error handling failed"
+    echo "❌ API client initialization failed"
     exit 1
 fi
 
@@ -88,8 +88,14 @@ echo "✅ Command-line interface working"
 echo "✅ Error handling in place"
 echo "✅ Documentation complete"
 echo ""
-echo "🚀 Ready to use! Just set DEEPINFRA_TOKEN and run:"
-echo "   export DEEPINFRA_TOKEN='your_token_here'"
+echo "🚀 Ready to use with dual-mode support!"
+echo ""
+echo "🏠 Local Mode (FREE):"
+echo "   ollama pull gpt-oss:20b"
+echo "   ./gpt-chat --local"
+echo ""
+echo "☁️  Remote Mode (PAID):"  
+echo "   export DEEPINFRA_API_KEY='your_api_key_here'"
 echo "   ./gpt-chat"
 echo ""
 echo "💡 Test with a query like:"

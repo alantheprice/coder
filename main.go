@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"gpt-chat/agent"
+	"gpt-chat/api"
 	"log"
 	"os"
 	"strings"
@@ -16,14 +17,40 @@ func main() {
 		return
 	}
 
+	// Check for local flag
+	useLocal := false
+	if len(os.Args) > 1 && (os.Args[1] == "--local" || os.Args[1] == "-l") {
+		useLocal = true
+		// Force Ollama client by unsetting the API key temporarily
+		if os.Getenv("DEEPINFRA_API_KEY") != "" {
+			fmt.Println("📍 Using local inference (--local flag detected)")
+			os.Setenv("DEEPINFRA_API_KEY_BACKUP", os.Getenv("DEEPINFRA_API_KEY"))
+			os.Unsetenv("DEEPINFRA_API_KEY")
+		}
+	}
+
 	// Initialize the agent
-	chatAgent, err := agent.NewAgent("systematic_exploration_prompt.md")
+	chatAgent, err := agent.NewAgent()
 	if err != nil {
 		log.Fatalf("Failed to initialize agent: %v", err)
 	}
 
 	fmt.Println("🤖 GPT-OSS Chat Agent initialized successfully!")
-	fmt.Println("Using OpenAI gpt-oss-120b model via DeepInfra")
+
+	// Show which client is being used
+	clientType := api.GetClientTypeFromEnv()
+	if clientType == api.OllamaClientType {
+		fmt.Println("🏠 Using local gpt-oss:20b model via Ollama")
+		fmt.Println("💰 Cost: FREE (local inference)")
+	} else {
+		fmt.Println("☁️  Using gpt-oss-120b model via DeepInfra")
+		fmt.Println("💰 Cost: ~$0.09/M input + $0.45/M output tokens")
+	}
+
+	if useLocal {
+		fmt.Println("📍 Local mode forced by --local flag")
+	}
+
 	fmt.Println("Type your query or press Ctrl+C to exit")
 	fmt.Println("=====================================")
 
@@ -113,6 +140,7 @@ A command-line coding assistant using OpenAI's gpt-oss-120b model with 4 core to
 
 USAGE:
   Interactive mode:  ./gpt-chat
+  Local inference:   ./gpt-chat --local  (uses Ollama gpt-oss:20b)
   Piped input:      echo "your query" | ./gpt-chat
   Help:             ./gpt-chat --help
 
@@ -123,7 +151,15 @@ EXAMPLES:
   echo "Fix the bug in main.go where the variable is undefined" | ./gpt-chat
 
 ENVIRONMENT:
-  DEEPINFRA_API_KEY: Required API token for DeepInfra access
+  DEEPINFRA_API_KEY: API token for DeepInfra (if not set, uses local Ollama)
+
+MODEL OPTIONS:
+  🏠 Local (Ollama):    gpt-oss:20b - FREE, runs locally (14GB VRAM)
+  ☁️  Remote (DeepInfra): gpt-oss-120b - Paid, cloud-hosted (~$0.50/M tokens)
+
+SETUP:
+  Local:  ollama pull gpt-oss:20b
+  Remote: export DEEPINFRA_API_KEY="your_api_key_here"
 
 The agent follows a systematic exploration process and will autonomously:
 - Explore your codebase using shell commands
