@@ -8,6 +8,8 @@ import (
 	"log"
 	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 func main() {
@@ -77,14 +79,17 @@ func main() {
 	}
 
 	// Interactive mode
-	fmt.Print("\n> ")
-	scanner := bufio.NewScanner(os.Stdin)
+	fmt.Println("💡 Tip: Use \\ at end of line or paste multiline content directly")
 
-	for scanner.Scan() {
-		query := strings.TrimSpace(scanner.Text())
+	for {
+		query, err := readMultilineInput()
+		if err != nil {
+			log.Fatalf("Error reading input: %v", err)
+		}
+
+		query = strings.TrimSpace(query)
 
 		if query == "" {
-			fmt.Print("> ")
 			continue
 		}
 
@@ -95,16 +100,10 @@ func main() {
 
 		if query == "help" {
 			printHelp()
-			fmt.Print("\n> ")
 			continue
 		}
 
 		processQuery(chatAgent, query)
-		fmt.Print("\n> ")
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("Error reading input: %v", err)
 	}
 }
 
@@ -144,9 +143,20 @@ USAGE:
   Piped input:      echo "your query" | ./gpt-chat
   Help:             ./gpt-chat --help
 
+MULTILINE INPUT:
+  - End line with \ to continue on next line
+  - Auto-continues for: code blocks, braces {}, brackets [], parentheses ()
+  - Auto-continues for indented lines and comma-separated lists
+  - Paste multiline content - it will be handled automatically
+
 EXAMPLES:
   ./gpt-chat
   > Create a simple Go HTTP server in server.go
+  
+  > Fix this code:\
+  > func main() {\
+  >     // broken code here\
+  > }
   
   echo "Fix the bug in main.go where the variable is undefined" | ./gpt-chat
 
@@ -172,4 +182,82 @@ The agent follows a systematic exploration process and will autonomously:
 Type 'help' during interactive mode for this help message.
 Type 'exit' or 'quit' to end the session.
 `)
+}
+
+// readMultilineInput reads user input with support for Shift+Enter to continue
+// and Enter to submit. Returns the complete input string.
+func readMultilineInput() (string, error) {
+	// Try to use raw terminal input if available, fallback to line-by-line
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		return readRawMultilineInput()
+	}
+
+	// Fallback to simple scanner for non-terminal input
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		return scanner.Text(), scanner.Err()
+	}
+	return "", scanner.Err()
+}
+
+// readRawMultilineInput handles terminal raw input with Shift+Enter support
+func readRawMultilineInput() (string, error) {
+	var input strings.Builder
+
+	fmt.Print("> ")
+	scanner := bufio.NewScanner(os.Stdin)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Handle different multiline scenarios:
+		// 1. Backslash continuation
+		if strings.HasSuffix(line, "\\") {
+			line = strings.TrimSuffix(line, "\\")
+			input.WriteString(line)
+			input.WriteString("\n")
+			fmt.Print("  ") // Continuation prompt
+			continue
+		}
+
+		// 2. Detect common multiline patterns and auto-continue
+		trimmed := strings.TrimSpace(line)
+		if shouldContinueInput(trimmed, input.String()) {
+			input.WriteString(line)
+			input.WriteString("\n")
+			fmt.Print("  ") // Continuation prompt
+			continue
+		}
+
+		// 3. Regular line - add and finish
+		input.WriteString(line)
+		break
+	}
+
+	return input.String(), scanner.Err()
+}
+
+// shouldContinueInput determines if we should automatically continue multiline input
+func shouldContinueInput(line, existingInput string) bool {
+	// Auto-continue for code blocks and obvious multiline patterns
+	if strings.HasSuffix(line, "{") ||
+		strings.HasSuffix(line, "[") ||
+		strings.HasSuffix(line, "(") ||
+		strings.HasSuffix(line, ",") ||
+		strings.Contains(line, "```") && !strings.HasSuffix(existingInput, "```") {
+		return true
+	}
+
+	// Continue if we're inside a code block
+	if strings.Contains(existingInput, "```") &&
+		strings.Count(existingInput, "```")%2 == 1 {
+		return true
+	}
+
+	// Continue for indented lines (likely code)
+	if strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t") {
+		return true
+	}
+
+	return false
 }

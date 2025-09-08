@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+// TaskAction represents a completed action during task execution
+type TaskAction struct {
+	Type        string // "file_created", "file_modified", "command_executed", "file_read"
+	Description string // Human-readable description
+	Details     string // Additional details like file path, command, etc.
+}
+
 type Agent struct {
 	client           api.ClientInterface
 	messages         []api.Message
@@ -16,6 +23,7 @@ type Agent struct {
 	currentIteration int
 	totalCost        float64
 	clientType       api.ClientType
+	taskActions      []TaskAction // Track what was accomplished
 }
 
 func NewAgent() (*Agent, error) {
