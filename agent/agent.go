@@ -3,8 +3,8 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"gpt-chat/api"
-	"gpt-chat/tools"
+	"github.com/alantheprice/coder/api"
+	"github.com/alantheprice/coder/tools"
 	"strings"
 )
 
@@ -54,13 +54,33 @@ func NewAgent() (*Agent, error) {
 }
 
 func getEmbeddedSystemPrompt() string {
-	return `You are an expert software engineering agent with access to shell_command, read_file, edit_file, and write_file tools. You are autonomous and must keep going until the user's request is completely resolved.
+	return `You are an expert software engineering agent with access to shell_command, read_file, edit_file, write_file, add_todo, update_todo_status, and list_todos tools. You are autonomous and must keep going until the user's request is completely resolved.
 
 You MUST iterate and keep working until the problem is solved. You have everything you need to resolve this problem. Only terminate when you are sure the task is completely finished and verified.
 
+## Task Management (Optional)
+
+For complex multi-step tasks, you have todo tools available to help track progress:
+
+**Todo tools:**
+- add_todo: Create todo items for task planning
+- update_todo_status: Mark tasks as pending, in_progress, completed, or cancelled  
+- list_todos: View current todos and their status
+
+**When todos are helpful:**
+- Multi-step tasks (implementation + tests + documentation)
+- Complex tasks requiring careful planning
+- Tasks that might approach context limits
+
+**Todo workflow (when used):**
+1. Break down complex work into specific subtasks
+2. Mark tasks as "in_progress" when starting work
+3. Mark as "completed" immediately after finishing
+4. Keep only one task "in_progress" at a time
+
 Your systematic workflow:
 1. **Deeply understand the problem**: Analyze what the user is asking for and break it into manageable parts
-2. **Explore the codebase systematically**: ALWAYS start with shell commands to understand directory structure:
+3. **Explore the codebase systematically**: ALWAYS start with shell commands to understand directory structure:
    - Use ` + "`ls`" + ` or ` + "`tree`" + ` to see directory layout
    - Use comprehensive find commands (e.g., find . -name "*.json" | grep -i provider, find . -path "*/provider*")
    - Use ` + "`grep -r`" + ` to search for keywords across the codebase
@@ -229,6 +249,38 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		}
 		fmt.Printf("Editing file: %s\n", filePath)
 		return tools.EditFile(filePath, oldString, newString)
+
+	case "add_todo":
+		title, ok := args["title"].(string)
+		if !ok {
+			return "", fmt.Errorf("invalid title argument")
+		}
+		description := ""
+		if desc, ok := args["description"].(string); ok {
+			description = desc
+		}
+		priority := ""
+		if prio, ok := args["priority"].(string); ok {
+			priority = prio
+		}
+		fmt.Printf("Adding todo: %s\n", title)
+		return tools.AddTodo(title, description, priority), nil
+
+	case "update_todo_status":
+		id, ok := args["id"].(string)
+		if !ok {
+			return "", fmt.Errorf("invalid id argument")
+		}
+		status, ok := args["status"].(string)
+		if !ok {
+			return "", fmt.Errorf("invalid status argument")
+		}
+		fmt.Printf("Updating todo %s to %s\n", id, status)
+		return tools.UpdateTodoStatus(id, status), nil
+
+	case "list_todos":
+		fmt.Println("Listing todos")
+		return tools.ListTodos(), nil
 
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolCall.Function.Name)

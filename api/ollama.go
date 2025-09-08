@@ -33,16 +33,16 @@ func NewOllamaClient() (*LocalOllamaClient, error) {
 }
 
 func (c *LocalOllamaClient) SendChatRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error) {
-	// Create a request compatible with Ollama's OpenAI endpoint
+	// Convert to harmony format for gpt-oss models
+	formatter := NewHarmonyFormatter()
+	harmonyText := formatter.FormatMessagesForCompletion(messages, tools)
+
+	// Create a single message with harmony-formatted text
 	req := map[string]interface{}{
 		"model":      c.model,
-		"messages":   messages,
+		"messages":   []Message{{Role: "user", Content: harmonyText}},
 		"max_tokens": 4000,
-	}
-
-	// Add tools if provided
-	if len(tools) > 0 {
-		req["tools"] = tools
+		// Note: Don't include tools in harmony format - they're embedded in the text
 	}
 
 	// Add reasoning effort if provided (Ollama uses reasoning_effort, not reasoning)

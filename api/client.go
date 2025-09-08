@@ -91,7 +91,20 @@ func NewClient() (*Client, error) {
 }
 
 func (c *Client) SendChatRequest(req ChatRequest) (*ChatResponse, error) {
-	reqBody, err := json.Marshal(req)
+	// Convert to harmony format for gpt-oss models
+	formatter := NewHarmonyFormatter()
+	harmonyText := formatter.FormatMessagesForCompletion(req.Messages, req.Tools)
+
+	// Create a single message with harmony-formatted text
+	harmonyReq := ChatRequest{
+		Model:     req.Model,
+		Messages:  []Message{{Role: "user", Content: harmonyText}},
+		MaxTokens: req.MaxTokens,
+		Reasoning: req.Reasoning,
+		// Note: Don't include Tools in harmony format - they're embedded in the text
+	}
+
+	reqBody, err := json.Marshal(harmonyReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
@@ -223,6 +236,76 @@ func GetToolDefinitions() []Tool {
 						},
 					},
 					"required": []string{"file_path", "content"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: struct {
+				Name        string      `json:"name"`
+				Description string      `json:"description"`
+				Parameters  interface{} `json:"parameters"`
+			}{
+				Name:        "add_todo",
+				Description: "Add a new todo item to track task progress",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"title": map[string]interface{}{
+							"type":        "string",
+							"description": "Brief title of the todo item",
+						},
+						"description": map[string]interface{}{
+							"type":        "string",
+							"description": "Optional detailed description",
+						},
+						"priority": map[string]interface{}{
+							"type":        "string",
+							"description": "Priority level: high, medium, low",
+						},
+					},
+					"required": []string{"title"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: struct {
+				Name        string      `json:"name"`
+				Description string      `json:"description"`
+				Parameters  interface{} `json:"parameters"`
+			}{
+				Name:        "update_todo_status",
+				Description: "Update the status of a todo item",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID of the todo item to update",
+						},
+						"status": map[string]interface{}{
+							"type":        "string",
+							"description": "New status: pending, in_progress, completed, cancelled",
+						},
+					},
+					"required": []string{"id", "status"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: struct {
+				Name        string      `json:"name"`
+				Description string      `json:"description"`
+				Parameters  interface{} `json:"parameters"`
+			}{
+				Name:        "list_todos",
+				Description: "List all current todos with their status",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+					"required":   []string{},
 				},
 			},
 		},

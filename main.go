@@ -3,13 +3,13 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"gpt-chat/agent"
-	"gpt-chat/api"
 	"log"
 	"os"
 	"strings"
 
-	"golang.org/x/term"
+	"github.com/alantheprice/coder/agent"
+	"github.com/alantheprice/coder/api"
+	"github.com/chzyer/readline"
 )
 
 func main() {
@@ -78,12 +78,29 @@ func main() {
 		return
 	}
 
-	// Interactive mode
-	fmt.Println("💡 Tip: Use \\ at end of line or paste multiline content directly")
+	// Interactive mode with readline support
+	homeDir, _ := os.UserHomeDir()
+	historyFile := homeDir + "/.gpt_chat_history"
+
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:       "> ",
+		HistoryFile:  historyFile,
+		HistoryLimit: 1000,
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize readline: %v", err)
+	}
+	defer rl.Close()
+
+	fmt.Println("💡 Tip: Use arrow keys to navigate, backspace to edit, up/down for history, Ctrl+C to exit")
 
 	for {
-		query, err := readMultilineInput()
+		query, err := rl.Readline()
 		if err != nil {
+			if err == readline.ErrInterrupt {
+				fmt.Println("Goodbye!")
+				break
+			}
 			log.Fatalf("Error reading input: %v", err)
 		}
 
@@ -143,11 +160,11 @@ USAGE:
   Piped input:      echo "your query" | ./gpt-chat
   Help:             ./gpt-chat --help
 
-MULTILINE INPUT:
-  - End line with \ to continue on next line
-  - Auto-continues for: code blocks, braces {}, brackets [], parentheses ()
-  - Auto-continues for indented lines and comma-separated lists
-  - Paste multiline content - it will be handled automatically
+INPUT FEATURES:
+  - Arrow keys for navigation and command history
+  - Backspace/Delete for editing
+  - Tab for completion (where available)
+  - Ctrl+C to exit
 
 EXAMPLES:
   ./gpt-chat
@@ -182,82 +199,4 @@ The agent follows a systematic exploration process and will autonomously:
 Type 'help' during interactive mode for this help message.
 Type 'exit' or 'quit' to end the session.
 `)
-}
-
-// readMultilineInput reads user input with support for Shift+Enter to continue
-// and Enter to submit. Returns the complete input string.
-func readMultilineInput() (string, error) {
-	// Try to use raw terminal input if available, fallback to line-by-line
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		return readRawMultilineInput()
-	}
-
-	// Fallback to simple scanner for non-terminal input
-	scanner := bufio.NewScanner(os.Stdin)
-	if scanner.Scan() {
-		return scanner.Text(), scanner.Err()
-	}
-	return "", scanner.Err()
-}
-
-// readRawMultilineInput handles terminal raw input with Shift+Enter support
-func readRawMultilineInput() (string, error) {
-	var input strings.Builder
-
-	fmt.Print("> ")
-	scanner := bufio.NewScanner(os.Stdin)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Handle different multiline scenarios:
-		// 1. Backslash continuation
-		if strings.HasSuffix(line, "\\") {
-			line = strings.TrimSuffix(line, "\\")
-			input.WriteString(line)
-			input.WriteString("\n")
-			fmt.Print("  ") // Continuation prompt
-			continue
-		}
-
-		// 2. Detect common multiline patterns and auto-continue
-		trimmed := strings.TrimSpace(line)
-		if shouldContinueInput(trimmed, input.String()) {
-			input.WriteString(line)
-			input.WriteString("\n")
-			fmt.Print("  ") // Continuation prompt
-			continue
-		}
-
-		// 3. Regular line - add and finish
-		input.WriteString(line)
-		break
-	}
-
-	return input.String(), scanner.Err()
-}
-
-// shouldContinueInput determines if we should automatically continue multiline input
-func shouldContinueInput(line, existingInput string) bool {
-	// Auto-continue for code blocks and obvious multiline patterns
-	if strings.HasSuffix(line, "{") ||
-		strings.HasSuffix(line, "[") ||
-		strings.HasSuffix(line, "(") ||
-		strings.HasSuffix(line, ",") ||
-		strings.Contains(line, "```") && !strings.HasSuffix(existingInput, "```") {
-		return true
-	}
-
-	// Continue if we're inside a code block
-	if strings.Contains(existingInput, "```") &&
-		strings.Count(existingInput, "```")%2 == 1 {
-		return true
-	}
-
-	// Continue for indented lines (likely code)
-	if strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t") {
-		return true
-	}
-
-	return false
 }
