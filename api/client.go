@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -16,8 +17,9 @@ const (
 )
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type ToolCall struct {
@@ -32,9 +34,10 @@ type ToolCall struct {
 type Choice struct {
 	Index   int `json:"index"`
 	Message struct {
-		Role      string     `json:"role"`
-		Content   string     `json:"content"`
-		ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+		Role             string     `json:"role"`
+		Content          string     `json:"content"`
+		ReasoningContent string     `json:"reasoning_content,omitempty"`
+		ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	} `json:"message"`
 	FinishReason string `json:"finish_reason"`
 }
@@ -74,6 +77,7 @@ type ChatRequest struct {
 type Client struct {
 	httpClient *http.Client
 	apiToken   string
+	debug      bool
 }
 
 func NewClient() (*Client, error) {
@@ -87,6 +91,7 @@ func NewClient() (*Client, error) {
 			Timeout: 120 * time.Second,
 		},
 		apiToken: token,
+		debug:    false, // Will be set later via SetDebug
 	}, nil
 }
 
@@ -117,24 +122,33 @@ func (c *Client) SendChatRequest(req ChatRequest) (*ChatResponse, error) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiToken)
 
+	// Log the request for debugging
+	if c.debug {
+		log.Printf("DeepInfra Request URL: %s", DeepInfraURL)
+		log.Printf("DeepInfra Request Headers: %v", httpReq.Header)
+		log.Printf("DeepInfra Request Body: %s", string(reqBody))
+	}
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	// Log the response for debugging
+	respBody, _ := io.ReadAll(resp.Body)
+	if c.debug {
+		log.Printf("DeepInfra Response Status: %s", resp.Status)
+		log.Printf("DeepInfra Response Headers: %v", resp.Header)
+		log.Printf("DeepInfra Response Body: %s", string(respBody))
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var chatResp ChatResponse
-	if err := json.Unmarshal(body, &chatResp); err != nil {
+	if err := json.Unmarshal(respBody, &chatResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 

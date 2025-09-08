@@ -9,6 +9,7 @@ import (
 type ClientInterface interface {
 	SendChatRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error)
 	CheckConnection() error
+	SetDebug(debug bool)
 }
 
 // ClientType represents the type of client to use
@@ -56,7 +57,7 @@ func (w *DeepInfraClientWrapper) SendChatRequest(messages []Message, tools []Too
 		Model:     Model,
 		Messages:  messages,
 		Tools:     tools,
-		MaxTokens: 4000,
+		MaxTokens: 30000,
 		Reasoning: reasoning,
 	}
 	return w.client.SendChatRequest(req)
@@ -68,4 +69,8 @@ func (w *DeepInfraClientWrapper) CheckConnection() error {
 		return fmt.Errorf("DEEPINFRA_API_KEY environment variable not set")
 	}
 	return nil
+}
+
+func (w *DeepInfraClientWrapper) SetDebug(debug bool) {
+	w.client.debug = debug
 }

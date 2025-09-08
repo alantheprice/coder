@@ -42,8 +42,10 @@ func (h *HarmonyFormatter) FormatMessagesForCompletion(messages []Message, tools
 		result.WriteString("} // namespace functions<|end|>")
 	}
 
-	// Start assistant response
-	result.WriteString("<|start|>assistant")
+	// Start assistant response with tool calling guidance
+	result.WriteString("<|start|>assistant\n\n")
+	result.WriteString("You can call tools by responding with a JSON object containing tool_calls. For example:\n")
+	result.WriteString("{\"tool_calls\": [{\"id\": \"call_123\", \"type\": \"function\", \"function\": {\"name\": \"shell_command\", \"arguments\": \"{\\\"command\\\": \\\"ls\\\"}\"}}]}\n\n")
 
 	return result.String()
 }

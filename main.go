@@ -12,22 +12,39 @@ import (
 	"github.com/chzyer/readline"
 )
 
-func main() {
-	// Check for help flag
-	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
-		printHelp()
-		return
+// debugLog logs a message only if debug mode is enabled
+func debugLog(debug bool, format string, args ...interface{}) {
+	if debug {
+		fmt.Printf(format, args...)
 	}
+}
 
-	// Check for local flag
+func main() {
+	// Parse command line arguments
+	var prompt string
 	useLocal := false
-	if len(os.Args) > 1 && (os.Args[1] == "--local" || os.Args[1] == "-l") {
-		useLocal = true
-		// Force Ollama client by unsetting the API key temporarily
-		if os.Getenv("DEEPINFRA_API_KEY") != "" {
-			fmt.Println("📍 Using local inference (--local flag detected)")
-			os.Setenv("DEEPINFRA_API_KEY_BACKUP", os.Getenv("DEEPINFRA_API_KEY"))
-			os.Unsetenv("DEEPINFRA_API_KEY")
+	debug := os.Getenv("DEBUG") == "true" || os.Getenv("DEBUG") == "1"
+
+	args := os.Args[1:] // Skip program name
+
+	// Process flags and positional arguments
+	for i, arg := range args {
+		switch {
+		case arg == "--help" || arg == "-h":
+			printHelp()
+			return
+		case arg == "--local" || arg == "-l":
+			useLocal = true
+			// Force Ollama client by unsetting the API key temporarily
+			if os.Getenv("DEEPINFRA_API_KEY") != "" {
+				debugLog(debug, "📍 Using local inference (--local flag detected)\n")
+				os.Setenv("DEEPINFRA_API_KEY_BACKUP", os.Getenv("DEEPINFRA_API_KEY"))
+				os.Unsetenv("DEEPINFRA_API_KEY")
+			}
+		case !strings.HasPrefix(arg, "-"):
+			// This is a positional argument - join all remaining args as the prompt
+			prompt = strings.Join(args[i:], " ")
+			break
 		}
 	}
 
@@ -37,24 +54,31 @@ func main() {
 		log.Fatalf("Failed to initialize agent: %v", err)
 	}
 
-	fmt.Println("🤖 GPT-OSS Chat Agent initialized successfully!")
+	debugLog(debug, "🤖 GPT-OSS Chat Agent initialized successfully!\n")
 
 	// Show which client is being used
 	clientType := api.GetClientTypeFromEnv()
 	if clientType == api.OllamaClientType {
-		fmt.Println("🏠 Using local gpt-oss:20b model via Ollama")
-		fmt.Println("💰 Cost: FREE (local inference)")
+		debugLog(debug, "🏠 Using local gpt-oss:20b model via Ollama\n")
+		debugLog(debug, "💰 Cost: FREE (local inference)\n")
 	} else {
-		fmt.Println("☁️  Using gpt-oss-120b model via DeepInfra")
-		fmt.Println("💰 Cost: ~$0.09/M input + $0.45/M output tokens")
+		debugLog(debug, "☁️  Using gpt-oss-120b model via DeepInfra\n")
+		debugLog(debug, "💰 Cost: ~$0.09/M input + $0.45/M output tokens\n")
 	}
 
 	if useLocal {
-		fmt.Println("📍 Local mode forced by --local flag")
+		debugLog(debug, "📍 Local mode forced by --local flag\n")
 	}
 
-	fmt.Println("Type your query or press Ctrl+C to exit")
-	fmt.Println("=====================================")
+	// Handle different input modes
+	if prompt != "" {
+		// Non-interactive mode: execute the provided prompt and exit
+		debugLog(debug, "🔍 Processing your query...\n")
+		debugLog(debug, "Query: %s\n", prompt)
+		debugLog(debug, "=====================================\n")
+		processQuery(chatAgent, prompt, debug)
+		return
+	}
 
 	// Check if input is piped
 	stat, _ := os.Stdin.Stat()
@@ -73,10 +97,17 @@ func main() {
 
 		query := strings.TrimSpace(input.String())
 		if query != "" {
-			processQuery(chatAgent, query)
+			debugLog(debug, "🔍 Processing your query...\n")
+			debugLog(debug, "Query: %s\n", query)
+			debugLog(debug, "=====================================\n")
+			processQuery(chatAgent, query, debug)
 		}
 		return
 	}
+
+	// Interactive mode
+	debugLog(debug, "Type your query or press Ctrl+C to exit\n")
+	debugLog(debug, "=====================================\n")
 
 	// Interactive mode with readline support
 	homeDir, _ := os.UserHomeDir()
@@ -92,13 +123,13 @@ func main() {
 	}
 	defer rl.Close()
 
-	fmt.Println("💡 Tip: Use arrow keys to navigate, backspace to edit, up/down for history, Ctrl+C to exit")
+	debugLog(debug, "💡 Tip: Use arrow keys to navigate, backspace to edit, up/down for history, Ctrl+C to exit\n")
 
 	for {
 		query, err := rl.Readline()
 		if err != nil {
 			if err == readline.ErrInterrupt {
-				fmt.Println("Goodbye!")
+				debugLog(debug, "Goodbye!\n")
 				break
 			}
 			log.Fatalf("Error reading input: %v", err)
@@ -111,7 +142,7 @@ func main() {
 		}
 
 		if query == "exit" || query == "quit" {
-			fmt.Println("Goodbye!")
+			debugLog(debug, "Goodbye!\n")
 			break
 		}
 
@@ -120,14 +151,14 @@ func main() {
 			continue
 		}
 
-		processQuery(chatAgent, query)
+		processQuery(chatAgent, query, debug)
 	}
 }
 
-func processQuery(chatAgent *agent.Agent, query string) {
-	fmt.Println("\n🔍 Processing your query...")
-	fmt.Println("Query:", query)
-	fmt.Println("=====================================")
+func processQuery(chatAgent *agent.Agent, query string, debug bool) {
+	debugLog(debug, "\n🔍 Processing your query...\n")
+	debugLog(debug, "Query: %s\n", query)
+	debugLog(debug, "=====================================\n")
 
 	result, err := chatAgent.ProcessQuery(query)
 	if err != nil {
@@ -140,8 +171,10 @@ func processQuery(chatAgent *agent.Agent, query string) {
 	fmt.Println(result)
 	fmt.Println("=====================================")
 
-	// Print conversation summary
-	chatAgent.PrintConversationSummary()
+	// Print conversation summary (only if debug is enabled)
+	if debug {
+		chatAgent.PrintConversationSummary()
+	}
 }
 
 func printHelp() {
@@ -155,10 +188,11 @@ A command-line coding assistant using OpenAI's gpt-oss-120b model with 4 core to
 - edit_file: Modify existing files with precise string replacement
 
 USAGE:
-  Interactive mode:  ./gpt-chat
-  Local inference:   ./gpt-chat --local  (uses Ollama gpt-oss:20b)
-  Piped input:      echo "your query" | ./gpt-chat
-  Help:             ./gpt-chat --help
+  Interactive mode:     ./coder
+  Non-interactive:      ./coder "your query here"
+  Local inference:      ./coder --local "your query"
+  Piped input:         echo "your query" | ./coder
+  Help:                ./coder --help
 
 INPUT FEATURES:
   - Arrow keys for navigation and command history
@@ -167,15 +201,21 @@ INPUT FEATURES:
   - Ctrl+C to exit
 
 EXAMPLES:
-  ./gpt-chat
+  # Interactive mode
+  ./coder
   > Create a simple Go HTTP server in server.go
   
-  > Fix this code:\
-  > func main() {\
-  >     // broken code here\
-  > }
+  # Non-interactive mode
+  ./coder "Create a simple Go HTTP server in server.go"
   
-  echo "Fix the bug in main.go where the variable is undefined" | ./gpt-chat
+  # Multi-word prompts (use quotes)
+  ./coder "Fix the bug in main.go and add unit tests"
+  
+  # Local inference
+  ./coder --local "Create a Python calculator"
+  
+  # Piped input
+  echo "Fix the bug in main.go where the variable is undefined" | ./coder
 
 ENVIRONMENT:
   DEEPINFRA_API_KEY: API token for DeepInfra (if not set, uses local Ollama)

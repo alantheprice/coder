@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -18,6 +19,7 @@ type LocalOllamaClient struct {
 	httpClient *http.Client
 	baseURL    string
 	model      string
+	debug      bool
 }
 
 // Using OpenAI-compatible endpoint, so we reuse existing ChatRequest and ChatResponse structs
@@ -29,6 +31,7 @@ func NewOllamaClient() (*LocalOllamaClient, error) {
 		},
 		baseURL: OllamaURL,
 		model:   OllamaModel,
+		debug:   false, // Will be set later via SetDebug
 	}, nil
 }
 
@@ -41,7 +44,7 @@ func (c *LocalOllamaClient) SendChatRequest(messages []Message, tools []Tool, re
 	req := map[string]interface{}{
 		"model":      c.model,
 		"messages":   []Message{{Role: "user", Content: harmonyText}},
-		"max_tokens": 4000,
+		"max_tokens": 30000,
 		// Note: Don't include tools in harmony format - they're embedded in the text
 	}
 
@@ -62,24 +65,33 @@ func (c *LocalOllamaClient) SendChatRequest(messages []Message, tools []Tool, re
 
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	// Log the request for debugging
+	if c.debug {
+		log.Printf("Ollama Request URL: %s", c.baseURL)
+		log.Printf("Ollama Request Headers: %v", httpReq.Header)
+		log.Printf("Ollama Request Body: %s", string(reqBody))
+	}
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Ollama request failed with status %d: %s", resp.StatusCode, string(body))
+	// Log the response for debugging
+	respBody, _ := io.ReadAll(resp.Body)
+	if c.debug {
+		log.Printf("Ollama Response Status: %s", resp.Status)
+		log.Printf("Ollama Response Headers: %v", resp.Header)
+		log.Printf("Ollama Response Body: %s", string(respBody))
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Ollama request failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var chatResp ChatResponse
-	if err := json.Unmarshal(body, &chatResp); err != nil {
+	if err := json.Unmarshal(respBody, &chatResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
@@ -132,6 +144,10 @@ func (c *LocalOllamaClient) CheckConnection() error {
 	}
 
 	return nil
+}
+
+func (c *LocalOllamaClient) SetDebug(debug bool) {
+	c.debug = debug
 }
 
 func (c *LocalOllamaClient) SetModel(model string) {

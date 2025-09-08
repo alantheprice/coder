@@ -3,9 +3,12 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/alantheprice/coder/api"
 	"github.com/alantheprice/coder/tools"
-	"strings"
 )
 
 // TaskAction represents a completed action during task execution
@@ -24,6 +27,14 @@ type Agent struct {
 	totalCost        float64
 	clientType       api.ClientType
 	taskActions      []TaskAction // Track what was accomplished
+	debug            bool         // Enable debug logging
+}
+
+// debugLog logs a message only if debug mode is enabled
+func (a *Agent) debugLog(format string, args ...interface{}) {
+	if a.debug {
+		fmt.Printf(format, args...)
+	}
 }
 
 func NewAgent() (*Agent, error) {
@@ -34,6 +45,12 @@ func NewAgent() (*Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API client: %w", err)
 	}
+
+	// Check if debug mode is enabled
+	debug := os.Getenv("DEBUG") == "true" || os.Getenv("DEBUG") == "1"
+
+	// Set debug mode on the client
+	client.SetDebug(debug)
 
 	// Check connection
 	if err := client.CheckConnection(); err != nil {
@@ -50,6 +67,7 @@ func NewAgent() (*Agent, error) {
 		maxIterations: 40, // Increased from 20 for more complex tasks
 		totalCost:     0.0,
 		clientType:    clientType,
+		debug:         debug,
 	}, nil
 }
 
@@ -57,6 +75,30 @@ func getEmbeddedSystemPrompt() string {
 	return `You are an expert software engineering agent with access to shell_command, read_file, edit_file, write_file, add_todo, update_todo_status, and list_todos tools. You are autonomous and must keep going until the user's request is completely resolved.
 
 You MUST iterate and keep working until the problem is solved. You have everything you need to resolve this problem. Only terminate when you are sure the task is completely finished and verified.
+
+## CRITICAL: Tool Usage Requirements
+
+**ALWAYS USE TOOLS FOR FILESYSTEM OPERATIONS - NEVER OUTPUT FILE CONTENT IN MESSAGES**
+
+When you need to:
+- Create or modify files → ALWAYS use write_file or edit_file tools
+- Read files → ALWAYS use read_file tool
+- Execute commands → ALWAYS use shell_command tool
+- Manage tasks → ALWAYS use todo tools
+
+**NEVER** output file content, code, or configuration in your response messages. If you need to create a file, use the write_file tool. If you need to modify a file, use the edit_file tool.
+
+## Tool Calling Instructions
+
+When you need to use a tool, you MUST respond with a proper tool call in this exact JSON format:
+{"tool_calls": [{"id": "call_123", "type": "function", "function": {"name": "tool_name", "arguments": "{\"param\": \"value\"}"}}]}
+
+For example, to list files:
+{"tool_calls": [{"id": "call_123", "type": "function", "function": {"name": "shell_command", "arguments": "{\"command\": \"ls\"}"}}]}
+
+DO NOT put tool calls in reasoning_content or any other field. Use the tool_calls field only.
+
+**REMEMBER**: Your response should contain EITHER tool calls OR a final answer, but NEVER file content in text form.
 
 ## Task Management (Optional)
 
@@ -80,7 +122,7 @@ For complex multi-step tasks, you have todo tools available to help track progre
 
 Your systematic workflow:
 1. **Deeply understand the problem**: Analyze what the user is asking for and break it into manageable parts
-3. **Explore the codebase systematically**: ALWAYS start with shell commands to understand directory structure:
+2. **Explore the codebase systematically**: ALWAYS start with shell commands to understand directory structure:
    - Use ` + "`ls`" + ` or ` + "`tree`" + ` to see directory layout
    - Use comprehensive find commands (e.g., find . -name "*.json" | grep -i provider, find . -path "*/provider*")
    - Use ` + "`grep -r`" + ` to search for keywords across the codebase
@@ -91,7 +133,11 @@ Your systematic workflow:
    - Don't guess which file is correct - read them all and compare their contents
    - Look for patterns, dependencies, and structural differences to determine the authoritative source
 4. **Develop a clear plan**: Based on reading ALL relevant files, determine exactly what needs to be modified
-5. **Implement incrementally**: Make precise changes using edit_file with exact string matching
+5. **Implement via tools ONLY**: NEVER output code or file content in messages - always use tools:
+   - To create files: Use write_file tool
+   - To modify files: Use edit_file tool with exact string matching
+   - To run commands: Use shell_command tool
+   - To manage tasks: Use todo tools
 6. **Test and verify**: Read files after editing to confirm changes were applied correctly
 7. **Iterate until complete**: If something doesn't work, analyze why and continue working
 
@@ -123,6 +169,14 @@ For file modifications:
 - Follow existing code style and naming conventions
 - Verify your changes by reading the file after editing
 
+## FINAL REMINDER
+**TOOL USAGE IS MANDATORY FOR ALL FILESYSTEM OPERATIONS**
+- If you need to create a file → Use write_file tool
+- If you need to modify a file → Use edit_file tool
+- If you need to read a file → Use read_file tool
+- If you need to run a command → Use shell_command tool
+- NEVER output file content or code in your response messages
+
 You are methodical, persistent, and autonomous. Use all available tools systematically to thoroughly understand the environment and complete the task.`
 }
 
@@ -138,7 +192,7 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 	for a.currentIteration < a.maxIterations {
 		a.currentIteration++
 
-		fmt.Printf("Iteration %d/%d\n", a.currentIteration, a.maxIterations)
+		a.debugLog("Iteration %d/%d\n", a.currentIteration, a.maxIterations)
 
 		// Send request to API using the unified interface
 		resp, err := a.client.SendChatRequest(a.messages, api.GetToolDefinitions(), "high")
@@ -152,7 +206,7 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 
 		// Track token usage and cost
 		a.totalCost += resp.Usage.EstimatedCost
-		fmt.Printf("💰 Tokens: %d prompt + %d completion = %d total | Cost: $%.6f (Total: $%.6f)\n",
+		a.debugLog("💰 Tokens: %d prompt + %d completion = %d total | Cost: $%.6f (Total: $%.6f)\n",
 			resp.Usage.PromptTokens,
 			resp.Usage.CompletionTokens,
 			resp.Usage.TotalTokens,
@@ -163,13 +217,14 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 
 		// Add assistant's message to history
 		a.messages = append(a.messages, api.Message{
-			Role:    "assistant",
-			Content: choice.Message.Content,
+			Role:             "assistant",
+			Content:          choice.Message.Content,
+			ReasoningContent: choice.Message.ReasoningContent,
 		})
 
 		// Check if there are tool calls to execute
 		if len(choice.Message.ToolCalls) > 0 {
-			fmt.Printf("Executing %d tool calls\n", len(choice.Message.ToolCalls))
+			a.debugLog("Executing %d tool calls\n", len(choice.Message.ToolCalls))
 
 			toolResults := make([]string, 0)
 			for _, toolCall := range choice.Message.ToolCalls {
@@ -189,8 +244,48 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 			// Continue the loop to get next response
 			continue
 		} else {
+			// Check if content or reasoning_content contains tool calls that weren't properly parsed
+			toolCalls := a.extractToolCallsFromContent(choice.Message.Content)
+			if len(toolCalls) == 0 {
+				// Also check reasoning_content
+				toolCalls = a.extractToolCallsFromContent(choice.Message.ReasoningContent)
+			}
+
+			if len(toolCalls) > 0 {
+				a.debugLog("Detected %d tool calls in content/reasoning_content, executing them\n", len(toolCalls))
+
+				toolResults := make([]string, 0)
+				for _, toolCall := range toolCalls {
+					result, err := a.executeTool(toolCall)
+					if err != nil {
+						result = fmt.Sprintf("Error executing tool %s: %s", toolCall.Function.Name, err.Error())
+					}
+					toolResults = append(toolResults, fmt.Sprintf("Tool: %s\nResult: %s", toolCall.Function.Name, result))
+
+					// Add tool result as a message
+					a.messages = append(a.messages, api.Message{
+						Role:    "user",
+						Content: fmt.Sprintf("Tool call result for %s: %s", toolCall.Function.Name, result),
+					})
+				}
+
+				// Continue the loop to get next response
+				continue
+			}
+
 			// No tool calls, check if we're done
 			if choice.FinishReason == "stop" {
+				// Check if content or reasoning_content contains malformed tool calls and remind the agent
+				if a.containsMalformedToolCalls(choice.Message.Content) || a.containsMalformedToolCalls(choice.Message.ReasoningContent) {
+					a.debugLog("⚠️  Detected malformed tool calls in response. Reminding agent to use proper tool call format...\n")
+
+					// Add a reminder message to help the agent
+					a.messages = append(a.messages, api.Message{
+						Role:    "user",
+						Content: "REMINDER: Please use proper tool call format with the 'tool_calls' field, not in the content or reasoning_content. Tool calls should be in JSON format like: {\"tool_calls\": [{\"id\": \"call_123\", \"type\": \"function\", \"function\": {\"name\": \"tool_name\", \"arguments\": \"{\\\"param\\\": \\\"value\\\"}\"}}]}",
+					})
+					continue
+				}
 				return choice.Message.Content, nil
 			}
 		}
@@ -205,39 +300,64 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		return "", fmt.Errorf("failed to parse tool arguments: %w", err)
 	}
 
+	// Log the tool call for debugging
+	a.debugLog("🔧 Executing tool: %s with args: %v\n", toolCall.Function.Name, args)
+
 	switch toolCall.Function.Name {
 	case "shell_command":
 		command, ok := args["command"].(string)
 		if !ok {
-			return "", fmt.Errorf("invalid command argument")
+			// Try alternative parameter name for backward compatibility
+			command, ok = args["cmd"].(string)
+			if !ok {
+				return "", fmt.Errorf("invalid command argument")
+			}
 		}
-		fmt.Printf("Executing shell command: %s\n", command)
-		return tools.ExecuteShellCommand(command)
+		a.debugLog("Executing shell command: %s\n", command)
+		result, err := tools.ExecuteShellCommand(command)
+		a.debugLog("Shell command result: %s, error: %v\n", result, err)
+		return result, err
 
 	case "read_file":
 		filePath, ok := args["file_path"].(string)
 		if !ok {
-			return "", fmt.Errorf("invalid file_path argument")
+			// Try alternative parameter name for backward compatibility
+			filePath, ok = args["path"].(string)
+			if !ok {
+				return "", fmt.Errorf("invalid file_path argument")
+			}
 		}
-		fmt.Printf("Reading file: %s\n", filePath)
-		return tools.ReadFile(filePath)
+		a.debugLog("Reading file: %s\n", filePath)
+		result, err := tools.ReadFile(filePath)
+		a.debugLog("Read file result: %s, error: %v\n", result, err)
+		return result, err
 
 	case "write_file":
 		filePath, ok := args["file_path"].(string)
 		if !ok {
-			return "", fmt.Errorf("invalid file_path argument")
+			// Try alternative parameter name for backward compatibility
+			filePath, ok = args["path"].(string)
+			if !ok {
+				return "", fmt.Errorf("invalid file_path argument")
+			}
 		}
 		content, ok := args["content"].(string)
 		if !ok {
 			return "", fmt.Errorf("invalid content argument")
 		}
-		fmt.Printf("Writing file: %s\n", filePath)
-		return tools.WriteFile(filePath, content)
+		a.debugLog("Writing file: %s\n", filePath)
+		result, err := tools.WriteFile(filePath, content)
+		a.debugLog("Write file result: %s, error: %v\n", result, err)
+		return result, err
 
 	case "edit_file":
 		filePath, ok := args["file_path"].(string)
 		if !ok {
-			return "", fmt.Errorf("invalid file_path argument")
+			// Try alternative parameter name for backward compatibility
+			filePath, ok = args["path"].(string)
+			if !ok {
+				return "", fmt.Errorf("invalid file_path argument")
+			}
 		}
 		oldString, ok := args["old_string"].(string)
 		if !ok {
@@ -247,8 +367,10 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("invalid new_string argument")
 		}
-		fmt.Printf("Editing file: %s\n", filePath)
-		return tools.EditFile(filePath, oldString, newString)
+		a.debugLog("Editing file: %s\n", filePath)
+		result, err := tools.EditFile(filePath, oldString, newString)
+		a.debugLog("Edit file result: %s, error: %v\n", result, err)
+		return result, err
 
 	case "add_todo":
 		title, ok := args["title"].(string)
@@ -263,8 +385,10 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		if prio, ok := args["priority"].(string); ok {
 			priority = prio
 		}
-		fmt.Printf("Adding todo: %s\n", title)
-		return tools.AddTodo(title, description, priority), nil
+		a.debugLog("Adding todo: %s\n", title)
+		result := tools.AddTodo(title, description, priority)
+		a.debugLog("Add todo result: %s\n", result)
+		return result, nil
 
 	case "update_todo_status":
 		id, ok := args["id"].(string)
@@ -275,12 +399,16 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("invalid status argument")
 		}
-		fmt.Printf("Updating todo %s to %s\n", id, status)
-		return tools.UpdateTodoStatus(id, status), nil
+		a.debugLog("Updating todo %s to %s\n", id, status)
+		result := tools.UpdateTodoStatus(id, status)
+		a.debugLog("Update todo result: %s\n", result)
+		return result, nil
 
 	case "list_todos":
-		fmt.Println("Listing todos")
-		return tools.ListTodos(), nil
+		a.debugLog("Listing todos\n")
+		result := tools.ListTodos()
+		a.debugLog("List todos result: %s\n", result)
+		return result, nil
 
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolCall.Function.Name)
@@ -301,6 +429,10 @@ func (a *Agent) GetLastAssistantMessage() string {
 }
 
 func (a *Agent) PrintConversationSummary() {
+	// if !a.debug {
+	// 	return
+	// }
+
 	fmt.Println("\n=== Conversation Summary ===")
 	assistantMsgCount := 0
 	userMsgCount := 0
@@ -338,4 +470,92 @@ func (a *Agent) GetCurrentIteration() int {
 
 func (a *Agent) GetMaxIterations() int {
 	return a.maxIterations
+}
+
+// extractToolCallsFromContent attempts to parse tool calls from the assistant's content or reasoning_content
+func (a *Agent) extractToolCallsFromContent(content string) []api.ToolCall {
+	var toolCalls []api.ToolCall
+
+	if content == "" {
+		return toolCalls
+	}
+
+	// Look for tool_calls JSON structure in content
+	if strings.Contains(content, "tool_calls") {
+		// Try to extract and parse tool calls from content
+		start := strings.Index(content, `{"tool_calls":`)
+		if start != -1 {
+			// Find the end of the JSON object
+			end := strings.LastIndex(content[start:], "}")
+			if end != -1 {
+				jsonStr := content[start : start+end+1]
+
+				var toolCallData struct {
+					ToolCalls []api.ToolCall `json:"tool_calls"`
+				}
+
+				if err := json.Unmarshal([]byte(jsonStr), &toolCallData); err == nil {
+					toolCalls = toolCallData.ToolCalls
+				}
+			}
+		}
+	}
+
+	// Also check for alternative formats like {"cmd": ["bash", "-lc", "ls -R"]}
+	if strings.Contains(content, `"cmd":`) {
+		// Try to parse the cmd format
+		var cmdData struct {
+			Cmd []string `json:"cmd"`
+		}
+
+		if err := json.Unmarshal([]byte(content), &cmdData); err == nil && len(cmdData.Cmd) > 0 {
+			// Convert cmd format to shell_command tool call
+			command := strings.Join(cmdData.Cmd[1:], " ") // Skip the shell (e.g., "bash")
+			if len(cmdData.Cmd) > 1 {
+				command = strings.Join(cmdData.Cmd[1:], " ")
+			}
+
+			toolCall := api.ToolCall{
+				ID:   fmt.Sprintf("call_%d", time.Now().UnixNano()),
+				Type: "function",
+				Function: struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				}{
+					Name:      "shell_command",
+					Arguments: fmt.Sprintf(`{"command": "%s"}`, command),
+				},
+			}
+			toolCalls = append(toolCalls, toolCall)
+		}
+	}
+
+	return toolCalls
+}
+
+// containsMalformedToolCalls checks if content contains tool call-like patterns that aren't properly formatted
+func (a *Agent) containsMalformedToolCalls(content string) bool {
+	if content == "" {
+		return false
+	}
+
+	// Check for common patterns that indicate malformed tool calls
+	patterns := []string{
+		`{"tool_calls":`,
+		`"function":`,
+		`"arguments":`,
+		`shell_command`,
+		`read_file`,
+		`write_file`,
+		`edit_file`,
+		`"cmd":`, // Also detect the cmd format
+	}
+
+	for _, pattern := range patterns {
+		if strings.Contains(content, pattern) {
+			return true
+		}
+	}
+
+	return false
 }
