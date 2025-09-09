@@ -154,6 +154,9 @@ func NewAgentWithModel(model string) (*Agent, error) {
 	// Use embedded system prompt
 	systemPrompt := getEmbeddedSystemPrompt()
 
+	// Clear old todos at session start
+	tools.ClearTodos()
+
 	return &Agent{
 		client:        client,
 		messages:      []api.Message{},
@@ -230,6 +233,12 @@ Use ONLY these exact patterns:
 
 **Auto-complete after successful build:**
 {"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "auto_complete_todos", "arguments": "{\"context\": \"build_success\"}"}}]}
+
+## COMMAND OUTPUT INTERPRETATION
+- **Empty output means success**: Many Unix commands (like "go build .") return empty output when successful
+- **No output is good**: If a command completes without errors and produces no output, it succeeded
+- **Error detection**: Commands will return error messages if they fail - look for words like "error", "failed", "not found"
+- **Exit codes**: Commands return non-zero exit codes on failure, but the agent handles this automatically
 
 ## CRITICAL RULES
 - NEVER output code in text - always use tools
