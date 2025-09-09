@@ -10,6 +10,7 @@ import (
 	"github.com/alantheprice/coder/agent"
 	"github.com/alantheprice/coder/api"
 	"github.com/alantheprice/coder/commands"
+	"github.com/alantheprice/coder/tools"
 	"github.com/chzyer/readline"
 )
 
@@ -189,7 +190,63 @@ func main() {
 	}
 }
 
+// isShellCommand checks if the input looks like a shell command
+func isShellCommand(input string) bool {
+	input = strings.TrimSpace(input)
+	
+	// Common shell command prefixes
+	shellPrefixes := []string{
+		"ls", "cd", "pwd", "cat", "echo", "grep", "find", "git",
+		"go ", "python", "node", "npm", "yarn", "docker", "kubectl",
+		"curl", "wget", "ssh", "scp", "mv", "cp", "rm", "mkdir",
+		"touch", "chmod", "chown", "ps", "top", "kill", "df", "du",
+		"tar", "zip", "unzip", "gzip", "gunzip", "head", "tail",
+		"diff", "patch", "make", "gcc", "g++", "clang", "javac",
+		"rustc", "cargo", "dotnet", "php", "ruby", "perl", "awk",
+		"sed", "cut", "sort", "uniq", "wc", "tee", "xargs", "env",
+		"export", "source", "./", ".\\", "#", "$",
+	}
+	
+	for _, prefix := range shellPrefixes {
+		if strings.HasPrefix(input, prefix) {
+			return true
+		}
+	}
+	
+	// Check for commands that might start with variables or paths
+	if strings.Contains(input, " && ") || strings.Contains(input, " || ") ||
+		strings.Contains(input, " | ") || strings.Contains(input, ">") ||
+		strings.Contains(input, ">>") || strings.Contains(input, "<") {
+		return true
+	}
+	
+	return false
+}
+
+// executeShellCommandDirectly executes a shell command directly and prints output
+func executeShellCommandDirectly(command string, debug bool) {
+	debugLog(debug, "⚡ Direct shell command detected: %s\n", command)
+	debugLog(debug, "=====================================\n")
+	
+	result, err := tools.ExecuteShellCommand(command)
+	if err != nil {
+		fmt.Printf("❌ Command failed: %v\n", err)
+		fmt.Printf("Output: %s\n", result)
+	} else {
+		fmt.Printf("✅ Command executed successfully:\n")
+		fmt.Printf("Output: %s\n", result)
+	}
+	
+	debugLog(debug, "=====================================\n")
+}
+
 func processQuery(chatAgent *agent.Agent, query string, debug bool) {
+	// Check if this is a shell command that should be executed directly
+	if isShellCommand(query) {
+		executeShellCommandDirectly(query, debug)
+		return
+	}
+	
 	debugLog(debug, "\n🔍 Processing your query...\n")
 	debugLog(debug, "Query: %s\n", query)
 	debugLog(debug, "=====================================\n")
