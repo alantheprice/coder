@@ -207,6 +207,11 @@ func processQuery(chatAgent *agent.Agent, query string, debug bool) {
 
 	// Print conversation summary (always show)
 	chatAgent.PrintConversationSummary()
+	
+	// Save conversation state for continuity
+	if err := chatAgent.SaveState("default"); err != nil {
+		debugLog(debug, "Warning: Failed to save conversation state: %v\n", err)
+	}
 }
 
 func printHelp() {

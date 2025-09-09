@@ -14,7 +14,7 @@ import (
 
 const (
 	DeepInfraURL = "https://api.deepinfra.com/v1/openai/chat/completions"
-	DefaultModel = "openai/gpt-oss-120b"
+	DefaultModel = "deepseek-ai/DeepSeek-V3.1"
 )
 
 // IsGPTOSSModel checks if a model uses the GPT-OSS family and requires harmony syntax
@@ -103,7 +103,7 @@ func NewClientWithModel(model string) (*Client, error) {
 
 	return &Client{
 		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 300 * time.Second, // Increased from 120s to 300s for complex reasoning tasks
 		},
 		apiToken: token,
 		debug:    false, // Will be set later via SetDebug
@@ -127,10 +127,10 @@ func (c *Client) SendChatRequest(req ChatRequest) (*ChatResponse, error) {
 		// Configure harmony options based on request
 		opts := &HarmonyOptions{
 			ReasoningLevel: req.Reasoning,
-			EnableAnalysis: true, // Enable analysis channel for better reasoning
+			EnableAnalysis: false, // Disable analysis channel to reduce excessive reasoning
 		}
 		if opts.ReasoningLevel == "" {
-			opts.ReasoningLevel = "high" // default
+			opts.ReasoningLevel = "medium" // Reduced from "high" to "medium"
 		}
 		
 		harmonyText := formatter.FormatMessagesForCompletion(req.Messages, req.Tools, opts)

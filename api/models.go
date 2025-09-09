@@ -51,7 +51,7 @@ func getDeepInfraModels() ([]ModelInfo, error) {
 		return nil, fmt.Errorf("DEEPINFRA_API_KEY not set")
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second} // Increased from 30s to 60s
 	
 	req, err := http.NewRequest("GET", "https://api.deepinfra.com/v1/openai/models", nil)
 	if err != nil {

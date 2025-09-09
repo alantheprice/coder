@@ -17,7 +17,7 @@ func ExecuteShellCommand(command string) (string, error) {
 	cmd := exec.Command("bash", "-c", command)
 
 	// Set up timeout
-	timeout := 30 * time.Second
+	timeout := 60 * time.Second // Increased from 30s to 60s for longer operations
 
 	done := make(chan error, 1)
 	var output []byte

@@ -86,17 +86,8 @@ func (h *HarmonyFormatter) FormatMessagesForCompletion(messages []Message, tools
 		result.WriteString("After tool execution, provide your analysis in the analysis channel if needed, then give the final response in the final channel.<|end|>\n\n")
 	}
 
-	// Start assistant response with proper channel guidance
-	result.WriteString("<|start|>assistant")
-	
-	if opts.EnableAnalysis {
-		result.WriteString("<|channel|>analysis<|message|>")
-		result.WriteString("Let me analyze this request and plan my approach...")
-		result.WriteString("<|end|>\n\n")
-		result.WriteString("<|start|>assistant<|channel|>final<|message|>")
-	} else {
-		result.WriteString("<|channel|>final<|message|>")
-	}
+	// Start assistant response - let model choose its own approach
+	result.WriteString("<|start|>assistant<|channel|>final<|message|>")
 
 	return result.String()
 }

@@ -18,6 +18,14 @@ type TaskAction struct {
 	Details     string // Additional details like file path, command, etc.
 }
 
+// AgentState represents the state of an agent that can be persisted
+type AgentState struct {
+	Messages        []api.Message `json:"messages"`
+	PreviousSummary string        `json:"previous_summary"`
+	TaskActions     []TaskAction  `json:"task_actions"`
+	SessionID       string        `json:"session_id"`
+}
+
 type Agent struct {
 	client           api.ClientInterface
 	messages         []api.Message
@@ -33,6 +41,8 @@ type Agent struct {
 	completionTokens int          // Track total completion tokens
 	cachedTokens     int          // Track tokens that were cached/reused
 	cachedCostSavings float64      // Track cost savings from cached tokens
+	previousSummary   string       // Summary of previous actions for continuity
+	sessionID        string       // Unique session identifier
 }
 
 // debugLog logs a message only if debug mode is enabled
@@ -156,57 +166,13 @@ func NewAgentWithModel(model string) (*Agent, error) {
 }
 
 func getEmbeddedSystemPrompt() string {
-	return `You are a systematic software engineering agent. Follow this exact process for every task:
+	return `You are a helpful coding assistant with access to these tools:
+- shell_command: Execute shell commands
+- read_file: Read file contents  
+- write_file: Create files
+- edit_file: Modify files
 
-## PHASE 1: UNDERSTAND & PLAN
-1. Read the user's request carefully
-2. Break it into 2-3 specific, measurable steps
-3. Identify which files need to be read/modified
-
-## PHASE 2: EXPLORE
-1. Use shell_command to understand the current state
-2. Use read_file to examine relevant files 
-3. Document what you learned
-
-## PHASE 3: IMPLEMENT
-1. Make changes using edit_file or write_file
-2. Verify changes work using shell_command
-3. Test your solution
-
-## PHASE 4: VERIFY & COMPLETE
-1. Confirm all requirements are met
-2. Test that code compiles/runs
-3. Provide a brief completion summary
-
-## TOOL USAGE - FOLLOW EXACTLY
-
-Use ONLY these exact patterns:
-
-**List files:**
-{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "shell_command", "arguments": "{\"command\": \"ls -la\"}"}}]}
-
-**Read a file:**
-{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{\"file_path\": \"filename.go\"}"}}]}
-
-**Edit a file:**
-{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "edit_file", "arguments": "{\"file_path\": \"filename.go\", \"old_string\": \"exact text to replace\", \"new_string\": \"new text\"}"}}]}
-
-**Write a file:**
-{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": "{\"file_path\": \"filename.go\", \"content\": \"file contents\"}"}}]}
-
-**Test compilation:**
-{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "shell_command", "arguments": "{\"command\": \"go build .\"}"}}]}
-
-## CRITICAL RULES
-- NEVER output code in text - always use tools
-- ALWAYS verify your changes compile
-- Each step should have a clear purpose
-- If something fails, analyze why and adapt
-- Use exact string matching for edit_file
-- Follow existing code patterns and style
-- Complete all phases before finishing
-
-You are methodical, systematic, and persistent. Work through each phase carefully to ensure quality results.`
+Be efficient and direct. Only use tools when necessary to complete the task. For simple requests, minimize exploration.`
 }
 
 func (a *Agent) ProcessQuery(userQuery string) (string, error) {
@@ -805,15 +771,126 @@ func (a *Agent) formatTokenCount(tokens int) string {
 		return fmt.Sprintf("%d", tokens)
 	}
 	
-	str := fmt.Sprintf("%d", tokens)
-	result := ""
-	
-	for i, r := range str {
-		if i > 0 && (len(str)-i)%3 == 0 {
-			result += ","
-		}
-		result += string(r)
+	// Convert to thousands format with one decimal place
+	thousands := float64(tokens) / 1000.0
+	return fmt.Sprintf("%.1fK", thousands)
+}
+
+// ClearConversationHistory clears the conversation history
+func (a *Agent) ClearConversationHistory() {
+	a.messages = []api.Message{}
+	a.previousSummary = ""
+	a.taskActions = []TaskAction{}
+}
+
+// ExportState exports the current agent state for persistence
+func (a *Agent) ExportState() ([]byte, error) {
+	state := AgentState{
+		Messages:       a.messages,
+		PreviousSummary: a.previousSummary,
+		TaskActions:    a.taskActions,
+		SessionID:      a.sessionID,
+	}
+	return json.Marshal(state)
+}
+
+// ImportState imports agent state from JSON data
+func (a *Agent) ImportState(data []byte) error {
+	var state AgentState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+	a.messages = state.Messages
+	a.previousSummary = state.PreviousSummary
+	a.taskActions = state.TaskActions
+	a.sessionID = state.SessionID
+	return nil
+}
+
+// SaveStateToFile saves the agent state to a file
+func (a *Agent) SaveStateToFile(filename string) error {
+	stateData, err := a.ExportState()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, stateData, 0644)
+}
+
+// LoadStateFromFile loads agent state from a file
+func (a *Agent) LoadStateFromFile(filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	return a.ImportState(data)
+}
+
+// GenerateActionSummary creates a summary of completed actions for continuity
+func (a *Agent) GenerateActionSummary() string {
+	if len(a.taskActions) == 0 {
+		return "No actions completed yet."
 	}
 	
-	return result
+	var summary strings.Builder
+	summary.WriteString("Previous actions completed:\n")
+	
+	for i, action := range a.taskActions {
+		summary.WriteString(fmt.Sprintf("%d. %s: %s", i+1, action.Type, action.Description))
+		if action.Details != "" {
+			summary.WriteString(fmt.Sprintf(" (%s)", action.Details))
+		}
+		summary.WriteString("\n")
+	}
+	
+	return summary.String()
+}
+
+// AddTaskAction records a completed task action for continuity
+func (a *Agent) AddTaskAction(actionType, description, details string) {
+	a.taskActions = append(a.taskActions, TaskAction{
+		Type:        actionType,
+		Description: description,
+		Details:     details,
+	})
+}
+
+// SetPreviousSummary sets the summary of previous actions for continuity
+func (a *Agent) SetPreviousSummary(summary string) {
+	a.previousSummary = summary
+}
+
+// GetPreviousSummary returns the summary of previous actions
+func (a *Agent) GetPreviousSummary() string {
+	return a.previousSummary
+}
+
+// SetSessionID sets the session identifier for continuity
+func (a *Agent) SetSessionID(sessionID string) {
+	a.sessionID = sessionID
+}
+
+// GetSessionID returns the session identifier
+func (a *Agent) GetSessionID() string {
+	return a.sessionID
+}
+
+// ProcessQueryWithContinuity processes a query with continuity from previous actions
+func (a *Agent) ProcessQueryWithContinuity(userQuery string) (string, error) {
+	// Load previous state if available
+	if a.previousSummary != "" {
+		continuityPrompt := fmt.Sprintf(`
+CONTINUITY FROM PREVIOUS SESSION:
+%s
+
+CURRENT TASK:
+%s
+
+Please continue working on this task chain, building upon the previous actions.`, 
+			a.previousSummary, userQuery)
+		
+		return a.ProcessQuery(continuityPrompt)
+	}
+	
+	// No previous state, process normally
+	return a.ProcessQuery(userQuery)
 }
