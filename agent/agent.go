@@ -110,10 +110,20 @@ func (a *Agent) ShowColoredDiff(oldContent, newContent string, maxLines int) {
 }
 
 func NewAgent() (*Agent, error) {
+	return NewAgentWithModel("")
+}
+
+func NewAgentWithModel(model string) (*Agent, error) {
 	// Determine which client to use
 	clientType := api.GetClientTypeFromEnv()
 
-	client, err := api.NewUnifiedClient(clientType)
+	var client api.ClientInterface
+	var err error
+	if model != "" {
+		client, err = api.NewUnifiedClientWithModel(clientType, model)
+	} else {
+		client, err = api.NewUnifiedClient(clientType)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API client: %w", err)
 	}

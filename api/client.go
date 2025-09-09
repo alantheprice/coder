@@ -8,13 +8,19 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
 const (
 	DeepInfraURL = "https://api.deepinfra.com/v1/openai/chat/completions"
-	Model        = "openai/gpt-oss-120b"
+	DefaultModel = "openai/gpt-oss-120b"
 )
+
+// IsGPTOSSModel checks if a model uses the GPT-OSS family and requires harmony syntax
+func IsGPTOSSModel(model string) bool {
+	return strings.HasPrefix(model, "openai/gpt-oss")
+}
 
 type Message struct {
 	Role             string `json:"role"`
@@ -78,9 +84,14 @@ type Client struct {
 	httpClient *http.Client
 	apiToken   string
 	debug      bool
+	model      string
 }
 
 func NewClient() (*Client, error) {
+	return NewClientWithModel(DefaultModel)
+}
+
+func NewClientWithModel(model string) (*Client, error) {
 	token := os.Getenv("DEEPINFRA_API_KEY")
 	if token == "" {
 		return nil, fmt.Errorf("DEEPINFRA_API_KEY environment variable not set")
@@ -92,24 +103,33 @@ func NewClient() (*Client, error) {
 		},
 		apiToken: token,
 		debug:    false, // Will be set later via SetDebug
+		model:    model,
 	}, nil
 }
 
 func (c *Client) SendChatRequest(req ChatRequest) (*ChatResponse, error) {
-	// Convert to harmony format for gpt-oss models
-	formatter := NewHarmonyFormatter()
-	harmonyText := formatter.FormatMessagesForCompletion(req.Messages, req.Tools)
+	var finalReq ChatRequest
+	
+	// Use harmony format only for GPT-OSS models
+	if IsGPTOSSModel(req.Model) {
+		// Convert to harmony format for gpt-oss models
+		formatter := NewHarmonyFormatter()
+		harmonyText := formatter.FormatMessagesForCompletion(req.Messages, req.Tools)
 
-	// Create a single message with harmony-formatted text
-	harmonyReq := ChatRequest{
-		Model:     req.Model,
-		Messages:  []Message{{Role: "user", Content: harmonyText}},
-		MaxTokens: req.MaxTokens,
-		Reasoning: req.Reasoning,
-		// Note: Don't include Tools in harmony format - they're embedded in the text
+		// Create a single message with harmony-formatted text
+		finalReq = ChatRequest{
+			Model:     req.Model,
+			Messages:  []Message{{Role: "user", Content: harmonyText}},
+			MaxTokens: req.MaxTokens,
+			Reasoning: req.Reasoning,
+			// Note: Don't include Tools in harmony format - they're embedded in the text
+		}
+	} else {
+		// Use standard OpenAI format for other models
+		finalReq = req
 	}
 
-	reqBody, err := json.Marshal(harmonyReq)
+	reqBody, err := json.Marshal(finalReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}

@@ -23,6 +23,7 @@ func main() {
 	// Parse command line arguments
 	var prompt string
 	useLocal := false
+	model := ""
 	debug := os.Getenv("DEBUG") == "true" || os.Getenv("DEBUG") == "1"
 
 	args := os.Args[1:] // Skip program name
@@ -41,6 +42,8 @@ func main() {
 				os.Setenv("DEEPINFRA_API_KEY_BACKUP", os.Getenv("DEEPINFRA_API_KEY"))
 				os.Unsetenv("DEEPINFRA_API_KEY")
 			}
+		case strings.HasPrefix(arg, "--model="):
+			model = strings.TrimPrefix(arg, "--model=")
 		case !strings.HasPrefix(arg, "-"):
 			// This is a positional argument - join all remaining args as the prompt
 			prompt = strings.Join(args[i:], " ")
@@ -48,8 +51,14 @@ func main() {
 		}
 	}
 
-	// Initialize the agent
-	chatAgent, err := agent.NewAgent()
+	// Initialize the agent with optional model
+	var chatAgent *agent.Agent
+	var err error
+	if model != "" {
+		chatAgent, err = agent.NewAgentWithModel(model)
+	} else {
+		chatAgent, err = agent.NewAgent()
+	}
 	if err != nil {
 		log.Fatalf("Failed to initialize agent: %v", err)
 	}
@@ -62,7 +71,15 @@ func main() {
 		debugLog(debug, "🏠 Using local gpt-oss:20b model via Ollama\n")
 		debugLog(debug, "💰 Cost: FREE (local inference)\n")
 	} else {
-		debugLog(debug, "☁️  Using gpt-oss-120b model via DeepInfra\n")
+		modelName := model
+		if modelName == "" {
+			modelName = api.DefaultModel
+		}
+		if api.IsGPTOSSModel(modelName) {
+			debugLog(debug, "☁️  Using %s model via DeepInfra (harmony syntax)\n", modelName)
+		} else {
+			debugLog(debug, "☁️  Using %s model via DeepInfra (standard format)\n", modelName)
+		}
 		debugLog(debug, "💰 Cost: ~$0.09/M input + $0.45/M output tokens\n")
 	}
 
@@ -189,6 +206,7 @@ USAGE:
   Interactive mode:     ./coder
   Non-interactive:      ./coder "your query here"
   Local inference:      ./coder --local "your query"
+  Custom model:         ./coder --model=meta-llama/Meta-Llama-3.1-70B-Instruct "your query"
   Piped input:         echo "your query" | ./coder
   Help:                ./coder --help
 
@@ -212,6 +230,9 @@ EXAMPLES:
   # Local inference
   ./coder --local "Create a Python calculator"
   
+  # Use a different model
+  ./coder --model=meta-llama/Meta-Llama-3.1-70B-Instruct "Create a Python calculator"
+  
   # Piped input
   echo "Fix the bug in main.go where the variable is undefined" | ./coder
 
@@ -220,7 +241,11 @@ ENVIRONMENT:
 
 MODEL OPTIONS:
   🏠 Local (Ollama):    gpt-oss:20b - FREE, runs locally (14GB VRAM)
-  ☁️  Remote (DeepInfra): gpt-oss-120b - Paid, cloud-hosted (~$0.50/M tokens)
+  ☁️  Remote (DeepInfra): Multiple models available:
+     • openai/gpt-oss-120b (default) - Uses harmony syntax
+     • meta-llama/Meta-Llama-3.1-70B-Instruct - Standard format
+     • microsoft/WizardLM-2-8x22B - Standard format
+     • And many others - check DeepInfra docs for full list
 
 SETUP:
   Local:  ollama pull gpt-oss:20b

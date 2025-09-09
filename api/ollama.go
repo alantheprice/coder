@@ -150,6 +150,7 @@ func (c *LocalOllamaClient) SetDebug(debug bool) {
 	c.debug = debug
 }
 
-func (c *LocalOllamaClient) SetModel(model string) {
+func (c *LocalOllamaClient) SetModel(model string) error {
 	c.model = model
+	return nil
 }
