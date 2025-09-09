@@ -15,6 +15,14 @@ import (
 const (
 	DeepInfraURL = "https://api.deepinfra.com/v1/openai/chat/completions"
 	DefaultModel = "deepseek-ai/DeepSeek-V3.1"
+	
+	// Model types for different use cases
+	AgentModel = "deepseek-ai/DeepSeek-V3.1" // Primary agent model
+	CoderModel = "qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo" // Coding-specific model
+	FastModel  = "openai/gpt-oss-120b" // Fast model for commits and simple tasks
+	
+	// Local models (all use the same model for local inference)
+	LocalModel = "gpt-oss:20b"
 )
 
 // IsGPTOSSModel checks if a model uses the GPT-OSS family and requires harmony syntax

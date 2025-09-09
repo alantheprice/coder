@@ -22,6 +22,10 @@ func (e *ExitCommand) Description() string {
 
 // Execute runs the exit command
 func (e *ExitCommand) Execute(args []string, chatAgent *agent.Agent) error {
+	// Print cost rollup before exiting
+	fmt.Println("\n📊 Session Cost Summary:")
+	fmt.Println("=====================================")
+	chatAgent.PrintConversationSummary()
 	fmt.Println("👋 Goodbye!")
 	os.Exit(0)
 	return nil // This line won't be reached due to os.Exit

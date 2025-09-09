@@ -60,12 +60,23 @@ func (c *CommitCommand) executeMultiFileCommit(chatAgent *agent.Agent) error {
 
 	statusLines := strings.Split(strings.TrimSpace(string(statusOutput)), "\n")
 	
+	// Filter out empty lines to match single file commit behavior
+	var validStatusLines []string
+	for _, line := range statusLines {
+		if strings.TrimSpace(line) != "" {
+			validStatusLines = append(validStatusLines, line)
+		}
+	}
+
+	if len(validStatusLines) == 0 {
+		fmt.Println("✅ No changes to commit")
+		return nil
+	}
+	
 	// Step 2: Show available files
 	fmt.Println("\n📁 Modified files:")
-	for i, line := range statusLines {
-		if strings.TrimSpace(line) != "" {
-			fmt.Printf("%2d. %s\n", i+1, line)
-		}
+	for i, line := range validStatusLines {
+		fmt.Printf("%2d. %s\n", i+1, line)
 	}
 
 	// Step 3: Prompt user to select files
@@ -83,13 +94,11 @@ func (c *CommitCommand) executeMultiFileCommit(chatAgent *agent.Agent) error {
 	
 	if input == "a" || input == "all" {
 		// Add all modified files
-		for _, line := range statusLines {
-			if strings.TrimSpace(line) != "" {
-				// Extract filename from git status line (format: XY filename)
-				parts := strings.SplitN(line, " ", 2)
-				if len(parts) >= 2 {
-					filesToAdd = append(filesToAdd, strings.TrimSpace(parts[1]))
-				}
+		for _, line := range validStatusLines {
+			// Git porcelain format: first 2 chars are status, then space, then filename
+			if len(line) > 3 {
+				filename := strings.TrimSpace(line[3:]) // Skip first 3 characters (XX )
+				filesToAdd = append(filesToAdd, filename)
 			}
 		}
 		fmt.Println("✅ Adding all modified files")
@@ -104,16 +113,17 @@ func (c *CommitCommand) executeMultiFileCommit(chatAgent *agent.Agent) error {
 			
 			var index int
 			_, err := fmt.Sscanf(sel, "%d", &index)
-			if err != nil || index < 1 || index > len(statusLines) {
+			if err != nil || index < 1 || index > len(validStatusLines) {
 				fmt.Printf("❌ Invalid selection: %s\n", sel)
 				continue
 			}
 			
-			line := statusLines[index-1]
-			parts := strings.SplitN(line, " ", 2)
-			if len(parts) >= 2 {
-				filesToAdd = append(filesToAdd, strings.TrimSpace(parts[1]))
-				fmt.Printf("✅ Adding: %s\n", strings.TrimSpace(parts[1]))
+			line := validStatusLines[index-1]
+			// Git porcelain format: first 2 chars are status, then space, then filename
+			if len(line) > 3 {
+				filename := strings.TrimSpace(line[3:]) // Skip first 3 characters (XX )
+				filesToAdd = append(filesToAdd, filename)
+				fmt.Printf("✅ Adding: %s\n", filename)
 			}
 		}
 	}
@@ -274,12 +284,12 @@ func (c *CommitCommand) executeSingleFileCommit(args []string, chatAgent *agent.
 
 	// Extract filename from git status line
 	line := validStatusLines[index-1]
-	parts := strings.SplitN(line, " ", 2)
-	if len(parts) < 2 {
+	if len(line) <= 3 {
 		return fmt.Errorf("invalid git status line format: %s", line)
 	}
 
-	fileToAdd := strings.TrimSpace(parts[1])
+	// Git porcelain format: first 2 chars are status, then space, then filename
+	fileToAdd := strings.TrimSpace(line[3:]) // Skip first 3 characters (XX )
 	fmt.Printf("✅ Selected: %s\n", fileToAdd)
 
 	// Step 4: Stage the selected file
