@@ -156,6 +156,11 @@ func (c *Client) SendChatRequest(req ChatRequest) (*ChatResponse, error) {
 }
 
 func GetToolDefinitions() []Tool {
+	// Added ask_user tool for user clarification interactions
+	// This tool simply returns a prompt string that the agent can display to the user.
+	// It does not perform I/O in this non‑interactive environment.
+	// The implementation is defined in tools/ask_user.go.
+
 	return []Tool{
 		{
 			Type: "function",

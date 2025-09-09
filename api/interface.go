@@ -57,7 +57,7 @@ func (w *DeepInfraClientWrapper) SendChatRequest(messages []Message, tools []Too
 		Model:     Model,
 		Messages:  messages,
 		Tools:     tools,
-		MaxTokens: 30000,
+		MaxTokens: 100000,
 		Reasoning: reasoning,
 	}
 	return w.client.SendChatRequest(req)

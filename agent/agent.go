@@ -28,6 +28,9 @@ type Agent struct {
 	clientType       api.ClientType
 	taskActions      []TaskAction // Track what was accomplished
 	debug            bool         // Enable debug logging
+	totalTokens      int          // Track total tokens used across all requests
+	promptTokens     int          // Track total prompt tokens
+	completionTokens int          // Track total completion tokens
 }
 
 // debugLog logs a message only if debug mode is enabled
@@ -41,7 +44,15 @@ func (a *Agent) debugLog(format string, args ...interface{}) {
 func (a *Agent) ToolLog(action, target string) {
 	const blue = "\033[34m"
 	const reset = "\033[0m"
-	fmt.Printf("%s%s%s %s\n", blue, action, reset, target)
+	
+	// Format: [4:(45,000T)] read file filename.go
+	iterationInfo := fmt.Sprintf("[%d:(%sT)]", a.currentIteration, a.formatTokenCount(a.totalTokens))
+	
+	if target != "" {
+		fmt.Printf("%s%s %s%s %s\n", blue, iterationInfo, action, reset, target)
+	} else {
+		fmt.Printf("%s%s %s%s\n", blue, iterationInfo, action, reset)
+	}
 }
 
 // ShowColoredDiff displays a colored diff between old and new content (limited to first 50 lines)
@@ -125,7 +136,7 @@ func NewAgent() (*Agent, error) {
 		client:        client,
 		messages:      []api.Message{},
 		systemPrompt:  systemPrompt,
-		maxIterations: 40, // Increased from 20 for more complex tasks
+		maxIterations: 100,
 		totalCost:     0.0,
 		clientType:    clientType,
 		debug:         debug,
@@ -267,6 +278,9 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 
 		// Track token usage and cost
 		a.totalCost += resp.Usage.EstimatedCost
+		a.totalTokens += resp.Usage.TotalTokens
+		a.promptTokens += resp.Usage.PromptTokens
+		a.completionTokens += resp.Usage.CompletionTokens
 		a.debugLog("💰 Tokens: %d prompt + %d completion = %d total | Cost: $%.6f (Total: $%.6f)\n",
 			resp.Usage.PromptTokens,
 			resp.Usage.CompletionTokens,
@@ -347,6 +361,19 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 					})
 					continue
 				}
+				
+				// Check if the response looks incomplete or if the agent is declining the task
+				if a.isIncompleteResponse(choice.Message.Content) {
+					a.debugLog("⚠️  Detected potentially incomplete response. Encouraging agent to continue...\n")
+					
+					// Add encouragement to continue
+					a.messages = append(a.messages, api.Message{
+						Role:    "user", 
+						Content: "Please continue working on the task. You have all the tools needed to complete this request. Start by exploring the codebase systematically using shell_command and read_file tools to understand the current implementation, then make the necessary changes.",
+					})
+					continue
+				}
+				
 				return choice.Message.Content, nil
 			}
 		}
@@ -363,6 +390,26 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 
 	// Log the tool call for debugging
 	a.debugLog("🔧 Executing tool: %s with args: %v\n", toolCall.Function.Name, args)
+	
+	// Validate tool name and provide helpful error for common mistakes
+	validTools := []string{"shell_command", "read_file", "write_file", "edit_file", "add_todo", "update_todo_status", "list_todos"}
+	isValidTool := false
+	for _, valid := range validTools {
+		if toolCall.Function.Name == valid {
+			isValidTool = true
+			break
+		}
+	}
+	
+	if !isValidTool {
+		// Check for common misnamed tools and suggest corrections
+		suggestion := a.suggestCorrectToolName(toolCall.Function.Name)
+		if suggestion != "" {
+			return "", fmt.Errorf("unknown tool '%s'. Did you mean '%s'? Valid tools are: %v", 
+				toolCall.Function.Name, suggestion, validTools)
+		}
+		return "", fmt.Errorf("unknown tool '%s'. Valid tools are: %v", toolCall.Function.Name, validTools)
+	}
 
 	switch toolCall.Function.Name {
 	case "shell_command":
@@ -537,6 +584,7 @@ func (a *Agent) PrintConversationSummary() {
 	fmt.Printf("Assistant messages: %d\n", assistantMsgCount)
 	fmt.Printf("Tool executions: %d\n", userMsgCount) // Tool results come back as user messages
 	fmt.Printf("Total messages exchanged: %d\n", len(a.messages))
+	fmt.Printf("🔢 Total tokens: %s (%d prompt + %d completion)\n", a.formatTokenCount(a.totalTokens), a.promptTokens, a.completionTokens)
 	fmt.Printf("💰 Total cost: $%.6f\n", a.totalCost)
 	fmt.Println("=============================\n")
 }
@@ -639,4 +687,118 @@ func (a *Agent) containsMalformedToolCalls(content string) bool {
 	}
 
 	return false
+}
+
+// isIncompleteResponse checks if a response looks incomplete or is declining the task prematurely
+func (a *Agent) isIncompleteResponse(content string) bool {
+	if content == "" {
+		return true // Empty responses are definitely incomplete
+	}
+	
+	content = strings.ToLower(content)
+	
+	// Common patterns that indicate the agent is giving up too early
+	declinePatterns := []string{
+		"i'm not able to",
+		"i cannot",
+		"i can't",
+		"not possible to",
+		"unable to",
+		"can only work with",
+		"cannot modify",
+		"cannot add",
+		"cannot create",
+	}
+	
+	// If it's a short response with decline language, it's likely incomplete
+	if len(content) < 200 {
+		for _, pattern := range declinePatterns {
+			if strings.Contains(content, pattern) {
+				return true
+			}
+		}
+	}
+	
+	// If there's no evidence of tool usage or exploration, likely incomplete
+	toolEvidencePatterns := []string{
+		"ls",
+		"read",
+		"write",
+		"edit",
+		"shell",
+		"file",
+		"directory",
+		"explore",
+		"implement",
+		"create",
+	}
+	
+	hasToolEvidence := false
+	for _, pattern := range toolEvidencePatterns {
+		if strings.Contains(content, pattern) {
+			hasToolEvidence = true
+			break
+		}
+	}
+	
+	// Short response without tool evidence suggests giving up early
+	if len(content) < 300 && !hasToolEvidence {
+		return true
+	}
+	
+	return false
+}
+
+// suggestCorrectToolName suggests the correct tool name for common mistakes
+func (a *Agent) suggestCorrectToolName(invalidName string) string {
+	// Common tool name mappings
+	corrections := map[string]string{
+		"exec":         "shell_command",
+		"bash":         "shell_command", 
+		"cmd":          "shell_command",
+		"command":      "shell_command",
+		"run":          "shell_command",
+		"execute":      "shell_command",
+		"read":         "read_file",
+		"cat":          "read_file",
+		"open":         "read_file",
+		"write":        "write_file",
+		"save":         "write_file",
+		"create":       "write_file",
+		"edit":         "edit_file",
+		"modify":       "edit_file",
+		"change":       "edit_file",
+		"replace":      "edit_file",
+		"todo":         "add_todo",
+		"task":         "add_todo",
+		"update":       "update_todo_status",
+		"status":       "update_todo_status",
+		"list":         "list_todos",
+		"show":         "list_todos",
+	}
+	
+	if suggestion, exists := corrections[strings.ToLower(invalidName)]; exists {
+		return suggestion
+	}
+	
+	return ""
+}
+
+// formatTokenCount formats token count with thousands separators
+func (a *Agent) formatTokenCount(tokens int) string {
+	if tokens < 1000 {
+		return fmt.Sprintf("%d", tokens)
+	}
+	
+	str := fmt.Sprintf("%d", tokens)
+	result := ""
+	
+	for i, r := range str {
+		if i > 0 && (len(str)-i)%3 == 0 {
+			result += ","
+		}
+		result += string(r)
+	}
+	
+	return result
 }
