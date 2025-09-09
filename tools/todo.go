@@ -51,6 +51,39 @@ func AddTodo(title, description, priority string) string {
 	return fmt.Sprintf("✅ Added todo: %s (ID: %s)", title, item.ID)
 }
 
+// AddBulkTodos adds multiple todo items at once
+func AddBulkTodos(todos []struct {
+	Title       string
+	Description string
+	Priority    string
+}) string {
+	globalTodoManager.mutex.Lock()
+	defer globalTodoManager.mutex.Unlock()
+
+	var results []string
+	for _, todo := range todos {
+		priority := todo.Priority
+		if priority == "" {
+			priority = "medium"
+		}
+
+		item := TodoItem{
+			ID:          fmt.Sprintf("todo_%d", len(globalTodoManager.items)+1),
+			Title:       todo.Title,
+			Description: todo.Description,
+			Status:      "pending",
+			Priority:    priority,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+
+		globalTodoManager.items = append(globalTodoManager.items, item)
+		results = append(results, fmt.Sprintf("✅ %s (%s)", todo.Title, item.ID))
+	}
+
+	return fmt.Sprintf("📝 Added %d todos:\n%s", len(todos), strings.Join(results, "\n"))
+}
+
 // UpdateTodoStatus updates the status of a todo item
 func UpdateTodoStatus(id, status string) string {
 	globalTodoManager.mutex.Lock()
@@ -64,7 +97,7 @@ func UpdateTodoStatus(id, status string) string {
 	}
 
 	if !validStatuses[status] {
-		return fmt.Sprintf("❌ Invalid status: %s. Valid statuses: pending, in_progress, completed, cancelled", status)
+		return fmt.Sprintf("Invalid status: %s", status)
 	}
 
 	for i, item := range globalTodoManager.items {
@@ -72,12 +105,52 @@ func UpdateTodoStatus(id, status string) string {
 			globalTodoManager.items[i].Status = status
 			globalTodoManager.items[i].UpdatedAt = time.Now()
 
-			emoji := getStatusEmoji(status)
-			return fmt.Sprintf("%s Updated todo %s: %s", emoji, id, item.Title)
+			// Return minimal confirmation - the agent doesn't need verbose feedback
+			symbol := getCompactStatusSymbol(status)
+			return fmt.Sprintf("%s %s", symbol, item.Title)
 		}
 	}
 
-	return fmt.Sprintf("❌ Todo not found: %s", id)
+	return "Todo not found"
+}
+
+// UpdateTodoStatusBulk updates multiple todos at once to reduce tool calls
+func UpdateTodoStatusBulk(updates []struct {
+	ID     string
+	Status string
+}) string {
+	globalTodoManager.mutex.Lock()
+	defer globalTodoManager.mutex.Unlock()
+
+	var results []string
+	updateCount := 0
+
+	for _, update := range updates {
+		for i, item := range globalTodoManager.items {
+			if item.ID == update.ID {
+				if item.Status != update.Status {
+					globalTodoManager.items[i].Status = update.Status
+					globalTodoManager.items[i].UpdatedAt = time.Now()
+					updateCount++
+					
+					symbol := getCompactStatusSymbol(update.Status)
+					results = append(results, fmt.Sprintf("%s %s", symbol, item.Title))
+				}
+				break
+			}
+		}
+	}
+
+	if updateCount == 0 {
+		return "No updates made"
+	}
+
+	// Return compact summary instead of verbose list
+	if len(results) <= 3 {
+		return strings.Join(results, ", ")
+	}
+	
+	return fmt.Sprintf("Updated %d todos: %s, +%d more", updateCount, results[0], len(results)-1)
 }
 
 // ListTodos returns a formatted list of all todos
@@ -86,12 +159,11 @@ func ListTodos() string {
 	defer globalTodoManager.mutex.RUnlock()
 
 	if len(globalTodoManager.items) == 0 {
-		return "📝 No todos yet"
+		return "No todos"
 	}
 
 	var result strings.Builder
-	result.WriteString("📝 **Current Todos:**\n\n")
-
+	
 	// Group by status
 	statusGroups := map[string][]TodoItem{
 		"in_progress": {},
@@ -104,22 +176,81 @@ func ListTodos() string {
 		statusGroups[item.Status] = append(statusGroups[item.Status], item)
 	}
 
-	// Show in progress first
+	// Show only active todos by default, completed ones create context bloat
+	for _, status := range []string{"in_progress", "pending"} {
+		items := statusGroups[status]
+		if len(items) == 0 {
+			continue
+		}
+
+		for _, item := range items {
+			statusSymbol := getCompactStatusSymbol(item.Status)
+			priority := getCompactPrioritySymbol(item.Priority)
+			result.WriteString(fmt.Sprintf("%s%s %s (%s)", statusSymbol, priority, item.Title, item.ID))
+			if item.Description != "" {
+				result.WriteString(fmt.Sprintf(": %s", item.Description))
+			}
+			result.WriteString("\n")
+		}
+	}
+
+	// Show summary of completed items without details
+	completedCount := len(statusGroups["completed"])
+	cancelledCount := len(statusGroups["cancelled"])
+	if completedCount > 0 {
+		result.WriteString(fmt.Sprintf("✓ %d completed", completedCount))
+	}
+	if cancelledCount > 0 {
+		if completedCount > 0 {
+			result.WriteString(", ")
+		}
+		result.WriteString(fmt.Sprintf("✗ %d cancelled", cancelledCount))
+	}
+	if completedCount > 0 || cancelledCount > 0 {
+		result.WriteString("\n")
+	}
+
+	return result.String()
+}
+
+// ListAllTodos returns verbose format when full context is needed
+func ListAllTodos() string {
+	globalTodoManager.mutex.RLock()
+	defer globalTodoManager.mutex.RUnlock()
+
+	if len(globalTodoManager.items) == 0 {
+		return "No todos"
+	}
+
+	var result strings.Builder
+	
+	statusGroups := map[string][]TodoItem{
+		"in_progress": {},
+		"pending":     {},
+		"completed":   {},
+		"cancelled":   {},
+	}
+
+	for _, item := range globalTodoManager.items {
+		statusGroups[item.Status] = append(statusGroups[item.Status], item)
+	}
+
+	// Full verbose format for when complete context is needed
 	for _, status := range []string{"in_progress", "pending", "completed", "cancelled"} {
 		items := statusGroups[status]
 		if len(items) == 0 {
 			continue
 		}
 
-		result.WriteString(fmt.Sprintf("### %s %s\n", getStatusEmoji(status), strings.Title(strings.Replace(status, "_", " ", -1))))
+		result.WriteString(fmt.Sprintf("%s %s:\n", getStatusEmoji(status), status))
 		for _, item := range items {
 			priority := ""
 			if item.Priority != "" {
-				priority = fmt.Sprintf(" [%s]", strings.ToUpper(item.Priority))
+				priority = fmt.Sprintf("[%s] ", strings.ToUpper(item.Priority))
 			}
-			result.WriteString(fmt.Sprintf("- **%s**%s: %s", item.Title, priority, item.ID))
+			result.WriteString(fmt.Sprintf("  %s%s (%s)", priority, item.Title, item.ID))
 			if item.Description != "" {
-				result.WriteString(fmt.Sprintf(" - %s", item.Description))
+				result.WriteString(fmt.Sprintf(": %s", item.Description))
 			}
 			result.WriteString("\n")
 		}
@@ -215,6 +346,71 @@ func ClearTodos() string {
 	return fmt.Sprintf("🗑️ Cleared %d todos", count)
 }
 
+// ArchiveCompleted removes completed todos from active memory to reduce context bloat
+func ArchiveCompleted() string {
+	globalTodoManager.mutex.Lock()
+	defer globalTodoManager.mutex.Unlock()
+
+	var activeItems []TodoItem
+	archivedCount := 0
+
+	for _, item := range globalTodoManager.items {
+		if item.Status == "completed" || item.Status == "cancelled" {
+			archivedCount++
+		} else {
+			activeItems = append(activeItems, item)
+		}
+	}
+
+	globalTodoManager.items = activeItems
+	
+	if archivedCount == 0 {
+		return "No todos to archive"
+	}
+	
+	return fmt.Sprintf("Archived %d completed/cancelled todos", archivedCount)
+}
+
+// GetActiveTodosCompact returns minimal format focused on current work
+func GetActiveTodosCompact() string {
+	globalTodoManager.mutex.RLock()
+	defer globalTodoManager.mutex.RUnlock()
+
+	var active []string
+	var inProgress *TodoItem
+
+	for _, item := range globalTodoManager.items {
+		if item.Status == "in_progress" {
+			inProgress = &item
+		} else if item.Status == "pending" {
+			priority := getCompactPrioritySymbol(item.Priority)
+			active = append(active, fmt.Sprintf("%s%s", priority, item.Title))
+		}
+	}
+
+	if inProgress == nil && len(active) == 0 {
+		return "All done"
+	}
+
+	var result strings.Builder
+	if inProgress != nil {
+		result.WriteString(fmt.Sprintf("► %s", inProgress.Title))
+		if len(active) > 0 {
+			result.WriteString(" | ")
+		}
+	}
+	
+	if len(active) > 0 {
+		if len(active) <= 3 {
+			result.WriteString(strings.Join(active, ", "))
+		} else {
+			result.WriteString(fmt.Sprintf("%s, %s, +%d more", active[0], active[1], len(active)-2))
+		}
+	}
+
+	return result.String()
+}
+
 func getStatusEmoji(status string) string {
 	switch status {
 	case "pending":
@@ -228,4 +424,143 @@ func getStatusEmoji(status string) string {
 	default:
 		return "📝"
 	}
+}
+
+// getCompactStatusSymbol returns single-character status symbols for token efficiency
+func getCompactStatusSymbol(status string) string {
+	switch status {
+	case "pending":
+		return "○"
+	case "in_progress":
+		return "►"
+	case "completed":
+		return "✓"
+	case "cancelled":
+		return "✗"
+	default:
+		return "·"
+	}
+}
+
+// getCompactPrioritySymbol returns compact priority symbols
+func getCompactPrioritySymbol(priority string) string {
+	switch priority {
+	case "high":
+		return "!"
+	case "medium":
+		return ""
+	case "low":
+		return "·"
+	default:
+		return ""
+	}
+}
+
+// AutoCompleteTodos automatically completes todos based on context
+func AutoCompleteTodos(context string) string {
+	globalTodoManager.mutex.Lock()
+	defer globalTodoManager.mutex.Unlock()
+
+	var completed []string
+	
+	// Auto-complete based on common patterns
+	for i, item := range globalTodoManager.items {
+		if item.Status != "pending" && item.Status != "in_progress" {
+			continue
+		}
+
+		shouldComplete := false
+		switch context {
+		case "build_success":
+			if strings.Contains(strings.ToLower(item.Title), "build") ||
+			   strings.Contains(strings.ToLower(item.Title), "compile") {
+				shouldComplete = true
+			}
+		case "test_success":
+			if strings.Contains(strings.ToLower(item.Title), "test") {
+				shouldComplete = true
+			}
+		case "file_written":
+			if strings.Contains(strings.ToLower(item.Title), "create") ||
+			   strings.Contains(strings.ToLower(item.Title), "write") {
+				shouldComplete = true
+			}
+		}
+
+		if shouldComplete {
+			globalTodoManager.items[i].Status = "completed"
+			globalTodoManager.items[i].UpdatedAt = time.Now()
+			completed = append(completed, item.Title)
+		}
+	}
+
+	if len(completed) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("🎯 Auto-completed %d todos based on %s:\n%s", 
+		len(completed), context, strings.Join(completed, "\n"))
+}
+
+// GetNextTodo returns the next logical todo based on current state
+func GetNextTodo() string {
+	globalTodoManager.mutex.RLock()
+	defer globalTodoManager.mutex.RUnlock()
+
+	// Find next in-progress or pending todo by priority
+	var nextTodo *TodoItem
+	for _, item := range globalTodoManager.items {
+		if item.Status == "in_progress" {
+			return fmt.Sprintf("🔄 Continue: %s (%s)", item.Title, item.ID)
+		}
+		if item.Status == "pending" {
+			if nextTodo == nil || (item.Priority == "high" && nextTodo.Priority != "high") {
+				nextTodo = &item
+			}
+		}
+	}
+
+	if nextTodo != nil {
+		return fmt.Sprintf("⏳ Next: %s (%s)", nextTodo.Title, nextTodo.ID)
+	}
+
+	return "🎉 All todos completed!"
+}
+
+// SuggestTodos suggests todos based on common agent workflow patterns
+func SuggestTodos(phase string, taskContext string) []string {
+	var suggestions []string
+	
+	switch phase {
+	case "understand":
+		suggestions = append(suggestions,
+			"Analyze project structure",
+			"Identify key files and dependencies",
+			"Understand existing code patterns")
+	case "explore":
+		suggestions = append(suggestions,
+			"Read relevant source files",
+			"Check existing tests",
+			"Verify build configuration")
+	case "implement":
+		suggestions = append(suggestions,
+			"Write/modify core implementation",
+			"Add necessary imports",
+			"Follow existing code patterns")
+	case "verify":
+		suggestions = append(suggestions,
+			"Build and test changes",
+			"Fix any compilation errors",
+			"Validate implementation works")
+	}
+	
+	// Add context-specific suggestions
+	if strings.Contains(strings.ToLower(taskContext), "test") {
+		suggestions = append(suggestions, "Run test suite", "Fix failing tests")
+	}
+	if strings.Contains(strings.ToLower(taskContext), "api") {
+		suggestions = append(suggestions, "Update API documentation", "Test API endpoints")
+	}
+	
+	return suggestions
 }
