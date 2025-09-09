@@ -1,0 +1,15 @@
+{
+  "app_name": "SimpleServer",
+  "version": "1.0.0",
+  "server": {
+    "port": 8080,
+    "host": "localhost"
+  },
+  "database": {
+    "type": "sqlite",
+    "path": "data.db"
+  },
+  "logging": {
+    "level": "info"
+  }
+}

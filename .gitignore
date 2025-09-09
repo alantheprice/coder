@@ -1,2 +1,7 @@
 .ledit
 coder
+
+# Test environment work directories and logs
+test_environment/work_*
+test_environment/test_results/*.json
+test_environment/**/execution_output.log
