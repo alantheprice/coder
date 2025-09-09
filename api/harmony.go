@@ -42,10 +42,24 @@ func (h *HarmonyFormatter) FormatMessagesForCompletion(messages []Message, tools
 		result.WriteString("} // namespace functions<|end|>")
 	}
 
-	// Start assistant response with tool calling guidance
+	// Start assistant response with comprehensive tool calling guidance
 	result.WriteString("<|start|>assistant\n\n")
-	result.WriteString("You can call tools by responding with a JSON object containing tool_calls. For example:\n")
-	result.WriteString("{\"tool_calls\": [{\"id\": \"call_123\", \"type\": \"function\", \"function\": {\"name\": \"shell_command\", \"arguments\": \"{\\\"command\\\": \\\"ls\\\"}\"}}]}\n\n")
+	result.WriteString("You can call tools by responding with a JSON object containing tool_calls. Use EXACTLY these formats:\n\n")
+	
+	// Provide specific examples for each tool
+	result.WriteString("**Shell command:**\n")
+	result.WriteString("{\"tool_calls\": [{\"id\": \"call_1\", \"type\": \"function\", \"function\": {\"name\": \"shell_command\", \"arguments\": \"{\\\"command\\\": \\\"ls -la\\\"}\"}}]}\n\n")
+	
+	result.WriteString("**Read file:**\n")
+	result.WriteString("{\"tool_calls\": [{\"id\": \"call_1\", \"type\": \"function\", \"function\": {\"name\": \"read_file\", \"arguments\": \"{\\\"file_path\\\": \\\"filename.go\\\"}\"}}]}\n\n")
+	
+	result.WriteString("**Edit file:**\n")
+	result.WriteString("{\"tool_calls\": [{\"id\": \"call_1\", \"type\": \"function\", \"function\": {\"name\": \"edit_file\", \"arguments\": \"{\\\"file_path\\\": \\\"filename.go\\\", \\\"old_string\\\": \\\"exact text\\\", \\\"new_string\\\": \\\"replacement\\\"}\"}}]}\n\n")
+	
+	result.WriteString("**Write file:**\n")
+	result.WriteString("{\"tool_calls\": [{\"id\": \"call_1\", \"type\": \"function\", \"function\": {\"name\": \"write_file\", \"arguments\": \"{\\\"file_path\\\": \\\"filename.go\\\", \\\"content\\\": \\\"file contents\\\"}\"}}]}\n\n")
+	
+	result.WriteString("CRITICAL: Copy these formats exactly. Never use other tool names like 'exec', 'bash', 'cmd', 'open_file', etc.\n\n")
 
 	return result.String()
 }
@@ -53,11 +67,32 @@ func (h *HarmonyFormatter) FormatMessagesForCompletion(messages []Message, tools
 // formatToolParameters converts JSON schema to TypeScript-like parameters
 func (h *HarmonyFormatter) formatToolParameters(params interface{}) string {
 	if params == nil {
-		return ""
+		return "_: any"
 	}
 
-	// This is a simplified implementation - in practice you'd want to
-	// properly parse the JSON schema and convert to TypeScript types
+	// Parse the JSON schema and convert to TypeScript-like syntax
+	if paramsMap, ok := params.(map[string]interface{}); ok {
+		if props, exists := paramsMap["properties"]; exists {
+			if propsMap, ok := props.(map[string]interface{}); ok {
+				var paramParts []string
+				for paramName, paramDef := range propsMap {
+					if defMap, ok := paramDef.(map[string]interface{}); ok {
+						paramType := "string" // default
+						if typeVal, exists := defMap["type"]; exists {
+							if typeStr, ok := typeVal.(string); ok {
+								paramType = typeStr
+							}
+						}
+						paramParts = append(paramParts, fmt.Sprintf("%s: %s", paramName, paramType))
+					}
+				}
+				if len(paramParts) > 0 {
+					return fmt.Sprintf("{%s}", strings.Join(paramParts, ", "))
+				}
+			}
+		}
+	}
+	
 	return "_: any"
 }
 
