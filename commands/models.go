@@ -181,7 +181,24 @@ func (m *ModelsCommand) selectModel(chatAgent *agent.Agent) error {
 	fmt.Println("\n🎯 Select a Model:")
 	fmt.Println("==================")
 
-	// Display featured models first if any exist
+	fmt.Println("All Models:")
+	fmt.Println("===========")
+	// Display all models with numbers
+	for i, model := range models {
+		fmt.Printf("%d. \x1b[34m%s\x1b[0m", i+1, model.ID)
+		if model.InputCost > 0 && model.OutputCost > 0 {
+			fmt.Printf(" - $%.3f/$%.3f per M tokens", model.InputCost, model.OutputCost)
+		} else if model.Cost > 0 {
+			fmt.Printf(" - ~$%.2f/M tokens", model.Cost)
+		} else if model.Provider == "Ollama (Local)" {
+			fmt.Printf(" - FREE")
+		} else {
+			fmt.Printf(" - N/A")
+		}
+		fmt.Println()
+	}
+
+	// Display featured models at the end if any exist
 	if len(featuredIndices) > 0 {
 		fmt.Println("\n⭐ Featured Models (Popular & High Performance):")
 		fmt.Println("================================================")
@@ -201,23 +218,6 @@ func (m *ModelsCommand) selectModel(chatAgent *agent.Agent) error {
 				fmt.Printf(" - %dK context", model.ContextLength/1000)
 			}
 			fmt.Println()
-		}
-		fmt.Println()
-	}
-
-	fmt.Println("All Models:")
-	fmt.Println("===========")
-	// Display all models with numbers
-	for i, model := range models {
-		fmt.Printf("%d. \x1b[34m%s\x1b[0m", i+1, model.ID)
-		if model.InputCost > 0 && model.OutputCost > 0 {
-			fmt.Printf(" - $%.3f/$%.3f per M tokens", model.InputCost, model.OutputCost)
-		} else if model.Cost > 0 {
-			fmt.Printf(" - ~$%.2f/M tokens", model.Cost)
-		} else if model.Provider == "Ollama (Local)" {
-			fmt.Printf(" - FREE")
-		} else {
-			fmt.Printf(" - N/A")
 		}
 		fmt.Println()
 	}
