@@ -801,7 +801,9 @@ func (a *Agent) GetLastAssistantMessage() string {
 
 func (a *Agent) PrintConversationSummary() {
 
-	fmt.Println("\n=== Conversation Summary ===")
+	fmt.Println("\n📊 Conversation Summary")
+	fmt.Println("══════════════════════════════")
+	
 	assistantMsgCount := 0
 	userMsgCount := 0
 	toolCallCount := 0
@@ -820,16 +822,54 @@ func (a *Agent) PrintConversationSummary() {
 		}
 	}
 
-	fmt.Printf("Total iterations: %d\n", a.currentIteration)
-	fmt.Printf("Assistant messages: %d\n", assistantMsgCount)
-	fmt.Printf("Tool executions: %d\n", userMsgCount) // Tool results come back as user messages
-	fmt.Printf("Total messages exchanged: %d\n", len(a.messages))
-	fmt.Printf("🔢 Total tokens: %s (%d prompt + %d completion)\n", a.formatTokenCount(a.totalTokens), a.promptTokens, a.completionTokens)
+	// Conversation metrics
+	fmt.Printf("🔄 Iterations:      %d\n", a.currentIteration)
+	fmt.Printf("🤖 Assistant msgs:   %d\n", assistantMsgCount)
+	fmt.Printf("⚡ Tool executions:  %d\n", userMsgCount) // Tool results come back as user messages
+	fmt.Printf("📨 Total messages:   %d\n", len(a.messages))
+	fmt.Println()
+	
+	// Calculate actual processed tokens (excluding cached ones)
+	actualProcessedTokens := a.totalTokens - a.cachedTokens
+	
+	// Token usage section with better formatting
+	fmt.Println("🔢 Token Usage")
+	fmt.Println("──────────────────────────────")
+	fmt.Printf("📦 Total processed:    %s\n", a.formatTokenCount(a.totalTokens))
+	fmt.Printf("📝 Actual processed:   %s (%d prompt + %d completion)\n", 
+		a.formatTokenCount(actualProcessedTokens), a.promptTokens, a.completionTokens)
+	
 	if a.cachedTokens > 0 {
-		fmt.Printf("📋 Cached tokens: %s | Cost savings: $%.6f\n", a.formatTokenCount(a.cachedTokens), a.cachedCostSavings)
+		efficiency := float64(a.cachedTokens)/float64(a.totalTokens)*100
+		fmt.Printf("♻️  Cached reused:     %s\n", a.formatTokenCount(a.cachedTokens))
+		fmt.Printf("💰 Cost savings:       $%.6f\n", a.cachedCostSavings)
+		fmt.Printf("📈 Efficiency:        %.1f%% tokens cached\n", efficiency)
+		
+		// Add efficiency rating
+		var efficiencyRating string
+		switch {
+		case efficiency >= 50:
+			efficiencyRating = "🏆 Excellent"
+		case efficiency >= 30:
+			efficiencyRating = "✅ Good"
+		case efficiency >= 15:
+			efficiencyRating = "📊 Average"
+		default:
+			efficiencyRating = "📉 Low"
+		}
+		fmt.Printf("🏅 Efficiency rating: %s\n", efficiencyRating)
 	}
-	fmt.Printf("💰 Total cost: $%.6f\n", a.totalCost)
-	fmt.Println("=============================")
+	
+	fmt.Println()
+	fmt.Printf("💵 Total cost:        $%.6f\n", a.totalCost)
+	
+	// Add cost per iteration
+	if a.currentIteration > 0 {
+		costPerIteration := a.totalCost / float64(a.currentIteration)
+		fmt.Printf("📋 Cost per iteration: $%.6f\n", costPerIteration)
+	}
+	
+	fmt.Println("══════════════════════════════")
 	fmt.Println()
 }
 
