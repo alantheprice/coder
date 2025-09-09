@@ -32,6 +32,12 @@ echo "your query" | ./coder
 
 # Quick integration test
 ./test.sh
+
+# Cache tracking tests
+./test_cache_tracking.sh
+
+# Cost analysis tests
+./test_actual_costs.sh
 ```
 
 ### Environment Setup
@@ -59,32 +65,40 @@ This is a command-line coding assistant that uses the OpenAI gpt-oss-120b model 
   - **ollama.go**: Ollama API client  
   - **harmony.go**: Message formatting for gpt-oss models
   - **interface.go**: Unified client interface
-- **tools/**: Four essential coding tools
+- **tools/**: Eight essential coding tools
   - **shell.go**: Execute shell commands
   - **read.go**: Read file contents
   - **edit.go**: Modify files via string replacement
   - **write.go**: Create/overwrite files
   - **todo.go**: Task management and tracking
+  - **ask_user.go**: Interactive user prompts for clarification
+- **commands/**: Interactive slash command system
+  - **commands.go**: Command registry and execution
+  - **help.go**: Built-in help system
+  - **models.go**: Model selection and switching
 
 ### Key Features
 
 - **Autonomous Operation**: Agent continues until tasks are completely solved
 - **Dual-Mode Support**: Works with both cloud (DeepInfra) and local (Ollama) inference
+- **Interactive Mode**: Full readline support with slash commands (/help, /models)
 - **Tool Integration**: Native support for shell, file operations, and task management
 - **Systematic Exploration**: Follows structured workflow from embedded system prompt
-- **Context Management**: Tracks conversation history and token usage
+- **Context Management**: Tracks conversation history, token usage, and costs
+- **Multi-Model Support**: Supports multiple providers and model selection
 
 ### Tool Usage Patterns
 
 The agent uses tools systematically:
-1. **Shell commands** for exploration (`ls`, `find`, `grep`)
+1. **Shell commands** for exploration (`ls`, `find`, `grep`, `go build`, `go test`)
 2. **Read file** to understand existing code structure
 3. **Write/Edit file** to implement changes
 4. **Todo tools** for complex task tracking
+5. **Ask user** for clarification when requirements are ambiguous
 
 ### Model Configuration
 
-- **Remote**: `openai/gpt-oss-120b` via DeepInfra (~$0.50/M tokens)
+- **Remote**: `openai/gpt-oss-120b` via DeepInfra (pay per use)
 - **Local**: `gpt-oss:20b` via Ollama (free, requires 14GB VRAM)
 - **System Prompt**: v2_structured (systematically tested and optimized)
 - **Reasoning Effort**: High (for better strategic thinking)
@@ -112,9 +126,21 @@ This approach delivers:
 - Malformed tool calls are detected and corrected
 - Connection checks validate client setup
 
+### Interactive Commands
+
+When running in interactive mode, several slash commands are available:
+```bash
+/help              # Show available commands
+/models            # List available models  
+/models select     # Interactive model picker
+exit               # End session
+```
+
 ### Development Notes
 
 - Uses Go 1.24 with minimal dependencies (only readline)
 - Harmony message formatting for gpt-oss model compatibility
 - Debug mode available via `DEBUG` environment variable
 - Conversation history tracking for cost analysis
+- Comprehensive test suite with prompt engineering evaluation
+- Performance metrics tracking across different system prompts

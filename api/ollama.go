@@ -154,3 +154,7 @@ func (c *LocalOllamaClient) SetModel(model string) error {
 	c.model = model
 	return nil
 }
+
+func (c *LocalOllamaClient) GetModel() string {
+	return c.model
+}

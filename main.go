@@ -9,6 +9,7 @@ import (
 
 	"github.com/alantheprice/coder/agent"
 	"github.com/alantheprice/coder/api"
+	"github.com/alantheprice/coder/commands"
 	"github.com/chzyer/readline"
 )
 
@@ -65,6 +66,9 @@ func main() {
 
 	debugLog(debug, "🤖 GPT-OSS Chat Agent initialized successfully!\n")
 
+	// Initialize command registry for slash commands
+	cmdRegistry := commands.NewCommandRegistry()
+
 	// Show which client is being used
 	clientType := api.GetClientTypeFromEnv()
 	if clientType == api.OllamaClientType {
@@ -80,7 +84,7 @@ func main() {
 		} else {
 			debugLog(debug, "☁️  Using %s model via DeepInfra (standard format)\n", modelName)
 		}
-		debugLog(debug, "💰 Cost: ~$0.09/M input + $0.45/M output tokens\n")
+		debugLog(debug, "💰 Cost: Pay per use (see /models for pricing)\n")
 	}
 
 	if useLocal {
@@ -142,6 +146,10 @@ func main() {
 
 	debugLog(debug, "💡 Tip: Use arrow keys to navigate, backspace to edit, up/down for history, Ctrl+C to exit\n")
 
+	// Show selected model before prompt
+	currentModel := chatAgent.GetModel()
+	fmt.Printf("🤖 Selected model: %s\n", currentModel)
+
 	for {
 		query, err := rl.Readline()
 		if err != nil {
@@ -165,6 +173,15 @@ func main() {
 
 		if query == "help" {
 			printHelp()
+			continue
+		}
+
+		// Check if it's a slash command
+		if cmdRegistry.IsSlashCommand(query) {
+			err := cmdRegistry.Execute(query, chatAgent)
+			if err != nil {
+				fmt.Printf("❌ Command error: %v\n", err)
+			}
 			continue
 		}
 
@@ -209,6 +226,12 @@ USAGE:
   Custom model:         ./coder --model=meta-llama/Meta-Llama-3.1-70B-Instruct "your query"
   Piped input:         echo "your query" | ./coder
   Help:                ./coder --help
+
+SLASH COMMANDS (Interactive Mode):
+  /help                Show help and available slash commands
+  /models              List available models and select model to use
+  /models select       Interactive model selection
+  /models <model_id>   Set model directly
 
 INPUT FEATURES:
   - Arrow keys for navigation and command history

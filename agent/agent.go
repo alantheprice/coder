@@ -31,6 +31,8 @@ type Agent struct {
 	totalTokens      int          // Track total tokens used across all requests
 	promptTokens     int          // Track total prompt tokens
 	completionTokens int          // Track total completion tokens
+	cachedTokens     int          // Track tokens that were cached/reused
+	cachedCostSavings float64      // Track cost savings from cached tokens
 }
 
 // debugLog logs a message only if debug mode is enabled
@@ -232,16 +234,30 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 		}
 
 		// Track token usage and cost
+		cachedTokens := resp.Usage.PromptTokensDetails.CachedTokens
+		
+		// Use actual cost from API (already accounts for cached tokens)
 		a.totalCost += resp.Usage.EstimatedCost
 		a.totalTokens += resp.Usage.TotalTokens
 		a.promptTokens += resp.Usage.PromptTokens
 		a.completionTokens += resp.Usage.CompletionTokens
+		a.cachedTokens += cachedTokens
+		
+		// Calculate cost savings for display purposes only
+		cachedCostSavings := a.calculateCachedCost(cachedTokens)
+		a.cachedCostSavings += cachedCostSavings
+		
 		a.debugLog("💰 Tokens: %d prompt + %d completion = %d total | Cost: $%.6f (Total: $%.6f)\n",
 			resp.Usage.PromptTokens,
 			resp.Usage.CompletionTokens,
 			resp.Usage.TotalTokens,
 			resp.Usage.EstimatedCost,
 			a.totalCost)
+		
+		if cachedTokens > 0 {
+			a.debugLog("📋 Cached tokens: %d | Cost savings: $%.6f (Total savings: $%.6f)\n",
+				cachedTokens, cachedCostSavings, a.cachedCostSavings)
+		}
 
 		choice := resp.Choices[0]
 
@@ -540,6 +556,9 @@ func (a *Agent) PrintConversationSummary() {
 	fmt.Printf("Tool executions: %d\n", userMsgCount) // Tool results come back as user messages
 	fmt.Printf("Total messages exchanged: %d\n", len(a.messages))
 	fmt.Printf("🔢 Total tokens: %s (%d prompt + %d completion)\n", a.formatTokenCount(a.totalTokens), a.promptTokens, a.completionTokens)
+	if a.cachedTokens > 0 {
+		fmt.Printf("📋 Cached tokens: %s | Cost savings: $%.6f\n", a.formatTokenCount(a.cachedTokens), a.cachedCostSavings)
+	}
 	fmt.Printf("💰 Total cost: $%.6f\n", a.totalCost)
 	fmt.Println("=============================\n")
 }
@@ -554,6 +573,17 @@ func (a *Agent) GetCurrentIteration() int {
 
 func (a *Agent) GetMaxIterations() int {
 	return a.maxIterations
+}
+
+// SetModel updates the model being used by the agent
+func (a *Agent) SetModel(model string) error {
+	return a.client.SetModel(model)
+}
+
+// GetModel gets the current model being used by the agent
+func (a *Agent) GetModel() string {
+	// Use the interface method to get the model
+	return a.client.GetModel()
 }
 
 // extractToolCallsFromContent attempts to parse tool calls from the assistant's content or reasoning_content
@@ -740,6 +770,36 @@ func (a *Agent) suggestCorrectToolName(invalidName string) string {
 }
 
 // formatTokenCount formats token count with thousands separators
+// calculateCachedCost calculates the cost savings from cached tokens
+func (a *Agent) calculateCachedCost(cachedTokens int) float64 {
+	if cachedTokens == 0 {
+		return 0.0
+	}
+	
+	// Calculate cost savings based on model pricing (input token rate)
+	costPerToken := 0.0
+	model := a.GetModel()
+	
+	// Get input token pricing based on model
+	if strings.Contains(model, "gpt-oss") {
+		// GPT-OSS pricing: $0.30 per million input tokens
+		costPerToken = 0.30 / 1000000
+	} else if strings.Contains(model, "qwen3-coder") {
+		// Qwen3-Coder-480B-A35B-Instruct-Turbo pricing: $0.30 per million input tokens
+		costPerToken = 0.30 / 1000000
+	} else if strings.Contains(model, "llama") {
+		// Llama pricing: $0.36 per million tokens
+		costPerToken = 0.36 / 1000000
+	} else {
+		// Default pricing (use GPT-OSS input rate)
+		costPerToken = 0.30 / 1000000
+	}
+	
+	costSavings := float64(cachedTokens) * costPerToken
+	
+	return costSavings
+}
+
 func (a *Agent) formatTokenCount(tokens int) string {
 	if tokens < 1000 {
 		return fmt.Sprintf("%d", tokens)

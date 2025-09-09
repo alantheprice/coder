@@ -11,6 +11,7 @@ type ClientInterface interface {
 	CheckConnection() error
 	SetDebug(debug bool)
 	SetModel(model string) error
+	GetModel() string
 }
 
 // ClientType represents the type of client to use
@@ -90,4 +91,8 @@ func (w *DeepInfraClientWrapper) SetDebug(debug bool) {
 func (w *DeepInfraClientWrapper) SetModel(model string) error {
 	w.client.model = model
 	return nil
+}
+
+func (w *DeepInfraClientWrapper) GetModel() string {
+	return w.client.model
 }

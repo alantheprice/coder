@@ -59,6 +59,10 @@ type ChatResponse struct {
 		CompletionTokens int     `json:"completion_tokens"`
 		TotalTokens      int     `json:"total_tokens"`
 		EstimatedCost    float64 `json:"estimated_cost"`
+		PromptTokensDetails struct {
+			CachedTokens     int `json:"cached_tokens"`
+			CacheWriteTokens *int `json:"cache_write_tokens"`
+		} `json:"prompt_tokens_details,omitempty"`
 	} `json:"usage"`
 }
 
@@ -173,6 +177,10 @@ func (c *Client) SendChatRequest(req ChatRequest) (*ChatResponse, error) {
 	}
 
 	return &chatResp, nil
+}
+
+func (c *Client) GetModel() string {
+	return c.model
 }
 
 func GetToolDefinitions() []Tool {
