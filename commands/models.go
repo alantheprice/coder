@@ -67,6 +67,10 @@ func (m *ModelsCommand) listModels() error {
 		return models[i].ID < models[j].ID
 	})
 
+	// Identify featured models
+	featuredIndices := m.findFeaturedModels(models)
+
+	// Display all models
 	for i, model := range models {
 		fmt.Printf("%d. %s\n", i+1, model.ID)
 		if model.Description != "" {
@@ -75,16 +79,47 @@ func (m *ModelsCommand) listModels() error {
 		if model.Size != "" {
 			fmt.Printf("   Size: %s\n", model.Size)
 		}
-		if model.Cost > 0 {
-			if strings.Contains(model.Description, "$") {
-				// Description already contains detailed pricing info
-				fmt.Printf("   Cost: See description for rates\n")
-			} else {
-				// Legacy format fallback
+		if model.InputCost > 0 || model.OutputCost > 0 {
+			if model.InputCost > 0 && model.OutputCost > 0 {
+				fmt.Printf("   Cost: $%.3f/M input, $%.3f/M output tokens\n", model.InputCost, model.OutputCost)
+			} else if model.Cost > 0 {
+				// Fallback to legacy format
 				fmt.Printf("   Cost: ~$%.2f/M tokens\n", model.Cost)
 			}
-		} else {
+		} else if model.Provider == "Ollama (Local)" {
 			fmt.Printf("   Cost: FREE (local)\n")
+		} else {
+			fmt.Printf("   Cost: N/A\n")
+		}
+		if model.ContextLength > 0 {
+			fmt.Printf("   Context: %d tokens\n", model.ContextLength)
+		}
+		if len(model.Tags) > 0 {
+			fmt.Printf("   Tags: %s\n", strings.Join(model.Tags, ", "))
+		}
+		fmt.Println()
+	}
+
+	// Display featured models section
+	if len(featuredIndices) > 0 {
+		fmt.Println("⭐ Featured Models (Popular & High Performance):")
+		fmt.Println("================================================")
+		for _, idx := range featuredIndices {
+			model := models[idx]
+			fmt.Printf("%d. %s", idx+1, model.ID)
+			if model.InputCost > 0 && model.OutputCost > 0 {
+				fmt.Printf(" - $%.3f/$%.3f per M tokens", model.InputCost, model.OutputCost)
+			} else if model.Cost > 0 {
+				fmt.Printf(" - ~$%.2f/M tokens", model.Cost)
+			} else if model.Provider == "Ollama (Local)" {
+				fmt.Printf(" - FREE")
+			} else {
+				fmt.Printf(" - N/A")
+			}
+			if model.ContextLength > 0 {
+				fmt.Printf(" - %dK context", model.ContextLength/1000)
+			}
+			fmt.Println()
 		}
 		fmt.Println()
 	}
@@ -95,6 +130,32 @@ func (m *ModelsCommand) listModels() error {
 	fmt.Println("  /models                 - Show this list")
 
 	return nil
+}
+
+// findFeaturedModels identifies indices of featured models
+func (m *ModelsCommand) findFeaturedModels(models []api.ModelInfo) []int {
+	featuredPatterns := []string{
+		"openai/gpt-oss",
+		"deepseek-ai/deepseek-v3.1",
+		"qwen/qwen3-coder",
+		"qwen/qwen3-235b",
+		"mistralai/devstral",
+		"moonshotai/kimi-k2",
+		"google/gemini-2.5-pro",
+	}
+	
+	var featured []int
+	for i, model := range models {
+		modelLower := strings.ToLower(model.ID)
+		for _, pattern := range featuredPatterns {
+			if strings.Contains(modelLower, strings.ToLower(pattern)) {
+				featured = append(featured, i)
+				break
+			}
+		}
+	}
+	
+	return featured
 }
 
 // selectModel allows interactive model selection
@@ -109,23 +170,54 @@ func (m *ModelsCommand) selectModel(chatAgent *agent.Agent) error {
 		return nil
 	}
 
+	// Sort models alphabetically by model ID
+	sort.Slice(models, func(i, j int) bool {
+		return models[i].ID < models[j].ID
+	})
+
+	// Identify featured models
+	featuredIndices := m.findFeaturedModels(models)
+
 	fmt.Println("\n🎯 Select a Model:")
 	fmt.Println("==================")
 
-	// Display models with numbers
-	for i, model := range models {
-		fmt.Printf("%d. %s", i+1, model.ID)
-		if model.Description != "" {
-			fmt.Printf(" - %s", model.Description)
-		}
-		if model.Cost > 0 {
-			if strings.Contains(model.Description, "$") {
-				fmt.Printf(" (pay per use)")
+	// Display featured models first if any exist
+	if len(featuredIndices) > 0 {
+		fmt.Println("\n⭐ Featured Models (Popular & High Performance):")
+		fmt.Println("================================================")
+		for _, idx := range featuredIndices {
+			model := models[idx]
+			fmt.Printf("%d. \x1b[34m%s\x1b[0m", idx+1, model.ID)
+			if model.InputCost > 0 && model.OutputCost > 0 {
+				fmt.Printf(" - $%.3f/$%.3f per M tokens", model.InputCost, model.OutputCost)
+			} else if model.Cost > 0 {
+				fmt.Printf(" - ~$%.2f/M tokens", model.Cost)
+			} else if model.Provider == "Ollama (Local)" {
+				fmt.Printf(" - FREE")
 			} else {
-				fmt.Printf(" (~$%.2f/M)", model.Cost)
+				fmt.Printf(" - N/A")
 			}
+			if model.ContextLength > 0 {
+				fmt.Printf(" - %dK context", model.ContextLength/1000)
+			}
+			fmt.Println()
+		}
+		fmt.Println()
+	}
+
+	fmt.Println("All Models:")
+	fmt.Println("===========")
+	// Display all models with numbers
+	for i, model := range models {
+		fmt.Printf("%d. \x1b[34m%s\x1b[0m", i+1, model.ID)
+		if model.InputCost > 0 && model.OutputCost > 0 {
+			fmt.Printf(" - $%.3f/$%.3f per M tokens", model.InputCost, model.OutputCost)
+		} else if model.Cost > 0 {
+			fmt.Printf(" - ~$%.2f/M tokens", model.Cost)
+		} else if model.Provider == "Ollama (Local)" {
+			fmt.Printf(" - FREE")
 		} else {
-			fmt.Printf(" (FREE)")
+			fmt.Printf(" - N/A")
 		}
 		fmt.Println()
 	}
@@ -181,14 +273,16 @@ func (m *ModelsCommand) setModel(modelID string, chatAgent *agent.Agent) error {
 	if selectedModel.Description != "" {
 		fmt.Printf("   %s\n", selectedModel.Description)
 	}
-	if selectedModel.Cost > 0 {
-		if strings.Contains(selectedModel.Description, "$") {
-			fmt.Printf("   Cost: See description above for detailed rates\n")
-		} else {
+	if selectedModel.InputCost > 0 || selectedModel.OutputCost > 0 {
+		if selectedModel.InputCost > 0 && selectedModel.OutputCost > 0 {
+			fmt.Printf("   Cost: $%.3f/M input, $%.3f/M output tokens\n", selectedModel.InputCost, selectedModel.OutputCost)
+		} else if selectedModel.Cost > 0 {
 			fmt.Printf("   Cost: ~$%.2f/M tokens\n", selectedModel.Cost)
 		}
-	} else {
+	} else if selectedModel.Provider == "Ollama (Local)" {
 		fmt.Printf("   Cost: FREE (local inference)\n")
+	} else {
+		fmt.Printf("   Cost: N/A\n")
 	}
 
 	return nil

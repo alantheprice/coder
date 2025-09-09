@@ -11,12 +11,16 @@ import (
 
 // ModelInfo represents information about an available model
 type ModelInfo struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name,omitempty"`
-	Description string  `json:"description,omitempty"`
-	Provider    string  `json:"provider,omitempty"`
-	Size        string  `json:"size,omitempty"`
-	Cost        float64 `json:"cost,omitempty"`
+	ID            string  `json:"id"`
+	Name          string  `json:"name,omitempty"`
+	Description   string  `json:"description,omitempty"`
+	Provider      string  `json:"provider,omitempty"`
+	Size          string  `json:"size,omitempty"`
+	Cost          float64 `json:"cost,omitempty"`
+	InputCost     float64 `json:"input_cost,omitempty"`
+	OutputCost    float64 `json:"output_cost,omitempty"`
+	ContextLength int     `json:"context_length,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
 }
 
 // ModelsListInterface defines methods for listing available models
@@ -76,10 +80,21 @@ func getDeepInfraModels() ([]ModelInfo, error) {
 	var response struct {
 		Object string `json:"object"`
 		Data   []struct {
-			ID      string `json:"id"`
-			Object  string `json:"object"`
-			Created int64  `json:"created"`
-			OwnedBy string `json:"owned_by"`
+			ID       string `json:"id"`
+			Object   string `json:"object"`
+			Created  int64  `json:"created"`
+			OwnedBy  string `json:"owned_by"`
+			Metadata *struct {
+				Description   string  `json:"description,omitempty"`
+				ContextLength int     `json:"context_length,omitempty"`
+				MaxTokens     int     `json:"max_tokens,omitempty"`
+				Pricing       *struct {
+					InputTokens     float64 `json:"input_tokens"`
+					OutputTokens    float64 `json:"output_tokens"`
+					CacheReadTokens float64 `json:"cache_read_tokens,omitempty"`
+				} `json:"pricing,omitempty"`
+				Tags []string `json:"tags,omitempty"`
+			} `json:"metadata,omitempty"`
 		} `json:"data"`
 	}
 	
@@ -89,38 +104,27 @@ func getDeepInfraModels() ([]ModelInfo, error) {
 	
 	models := make([]ModelInfo, len(response.Data))
 	for i, model := range response.Data {
-		models[i] = ModelInfo{
+		modelInfo := ModelInfo{
 			ID:       model.ID,
 			Provider: "DeepInfra",
 		}
 		
-		// Add special descriptions and current pricing for known models
-		switch model.ID {
-		case "openai/gpt-oss-120b":
-			models[i].Description = "GPT-OSS 120B (default) - Uses harmony syntax - $0.30/1M input + $1.20/1M output"
-			models[i].Cost = 0.30 // Input rate per 1M tokens (output rate shown in description)
-		case "Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo":
-			models[i].Description = "Qwen3 Coder 480B Turbo - Code generation specialist - $0.30/1M input + $1.20/1M output"
-			models[i].Cost = 0.30 // Input rate per 1M tokens
-		case "Qwen/Qwen3-235B-A22B-Instruct":
-			models[i].Description = "Qwen3 235B - Large reasoning model - $0.13/1M input + $0.60/1M output"
-			models[i].Cost = 0.13
-		case "Qwen/QwQ-32B-Preview":
-			models[i].Description = "QwQ 32B Preview - Reasoning focused - $0.15/1M input + $0.40/1M output"
-			models[i].Cost = 0.15
-		case "Qwen/Qwen3-32B-Instruct":
-			models[i].Description = "Qwen3 32B - Balanced performance - $0.10/1M input + $0.30/1M output"
-			models[i].Cost = 0.10
-		case "meta-llama/Meta-Llama-3.1-70B-Instruct":
-			models[i].Description = "Meta Llama 3.1 70B Instruct - Standard format"
-			models[i].Cost = 0.36 // Legacy pricing format
-		case "microsoft/WizardLM-2-8x22B":
-			models[i].Description = "Microsoft WizardLM-2 8x22B - Enhanced reasoning"
-			models[i].Cost = 0.63 // Legacy pricing format
-		default:
-			models[i].Description = "Available on DeepInfra - See deepinfra.com/pricing for current rates"
-			models[i].Cost = 0.0 // Unknown pricing
+		// Extract metadata if available
+		if model.Metadata != nil {
+			modelInfo.Description = model.Metadata.Description
+			modelInfo.ContextLength = model.Metadata.ContextLength
+			modelInfo.Tags = model.Metadata.Tags
+			
+			// Extract pricing information
+			if model.Metadata.Pricing != nil {
+				modelInfo.InputCost = model.Metadata.Pricing.InputTokens
+				modelInfo.OutputCost = model.Metadata.Pricing.OutputTokens
+				// Use average of input/output for backward compatibility
+				modelInfo.Cost = (model.Metadata.Pricing.InputTokens + model.Metadata.Pricing.OutputTokens) / 2.0
+			}
 		}
+		
+		models[i] = modelInfo
 	}
 	
 	// Sort models alphabetically by ID
