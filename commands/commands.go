@@ -32,6 +32,7 @@ func NewCommandRegistry() *CommandRegistry {
 	registry.Register(&InitCommand{})
 	registry.Register(&ExitCommand{})
 	registry.Register(&CommitCommand{})
+	registry.Register(&ExecCommand{})
 
 	return registry
 }
