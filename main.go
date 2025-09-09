@@ -171,10 +171,8 @@ func processQuery(chatAgent *agent.Agent, query string, debug bool) {
 	fmt.Println(result)
 	fmt.Println("=====================================")
 
-	// Print conversation summary (only if debug is enabled)
-	if debug {
-		chatAgent.PrintConversationSummary()
-	}
+	// Print conversation summary (always show)
+	chatAgent.PrintConversationSummary()
 }
 
 func printHelp() {

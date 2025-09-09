@@ -37,6 +37,67 @@ func (a *Agent) debugLog(format string, args ...interface{}) {
 	}
 }
 
+// ToolLog logs tool execution messages that are always visible with blue formatting
+func (a *Agent) ToolLog(action, target string) {
+	const blue = "\033[34m"
+	const reset = "\033[0m"
+	fmt.Printf("%s%s%s %s\n", blue, action, reset, target)
+}
+
+// ShowColoredDiff displays a colored diff between old and new content (limited to first 50 lines)
+func (a *Agent) ShowColoredDiff(oldContent, newContent string, maxLines int) {
+	const red = "\033[31m"    // Red for deletions
+	const green = "\033[32m"  // Green for additions
+	const reset = "\033[0m"
+	
+	oldLines := strings.Split(oldContent, "\n")
+	newLines := strings.Split(newContent, "\n")
+	
+	// Simple line-by-line diff (not a full LCS implementation)
+	maxOld := len(oldLines)
+	maxNew := len(newLines)
+	lineCount := 0
+	
+	fmt.Println("Diff preview (first 50 lines):")
+	fmt.Println("----------------------------------------")
+	
+	i, j := 0, 0
+	for i < maxOld && j < maxNew && lineCount < maxLines {
+		if oldLines[i] == newLines[j] {
+			// Lines are the same, show context
+			fmt.Printf("  %s\n", oldLines[i])
+			i++
+			j++
+		} else {
+			// Lines differ, show deletion and addition
+			fmt.Printf("%s- %s%s\n", red, oldLines[i], reset)
+			fmt.Printf("%s+ %s%s\n", green, newLines[j], reset)
+			i++
+			j++
+		}
+		lineCount++
+	}
+	
+	// Show remaining deletions
+	for i < maxOld && lineCount < maxLines {
+		fmt.Printf("%s- %s%s\n", red, oldLines[i], reset)
+		i++
+		lineCount++
+	}
+	
+	// Show remaining additions
+	for j < maxNew && lineCount < maxLines {
+		fmt.Printf("%s+ %s%s\n", green, newLines[j], reset)
+		j++
+		lineCount++
+	}
+	
+	if lineCount >= maxLines && (i < maxOld || j < maxNew) {
+		fmt.Println("... (diff truncated)")
+	}
+	fmt.Println("----------------------------------------")
+}
+
 func NewAgent() (*Agent, error) {
 	// Determine which client to use
 	clientType := api.GetClientTypeFromEnv()
@@ -313,6 +374,7 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 				return "", fmt.Errorf("invalid command argument")
 			}
 		}
+		a.ToolLog("executing command", command)
 		a.debugLog("Executing shell command: %s\n", command)
 		result, err := tools.ExecuteShellCommand(command)
 		a.debugLog("Shell command result: %s, error: %v\n", result, err)
@@ -327,6 +389,7 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 				return "", fmt.Errorf("invalid file_path argument")
 			}
 		}
+		a.ToolLog("reading file", filePath)
 		a.debugLog("Reading file: %s\n", filePath)
 		result, err := tools.ReadFile(filePath)
 		a.debugLog("Read file result: %s, error: %v\n", result, err)
@@ -345,6 +408,7 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("invalid content argument")
 		}
+		a.ToolLog("writing file", filePath)
 		a.debugLog("Writing file: %s\n", filePath)
 		result, err := tools.WriteFile(filePath, content)
 		a.debugLog("Write file result: %s, error: %v\n", result, err)
@@ -367,8 +431,25 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("invalid new_string argument")
 		}
+		
+		// Read the original content for diff display
+		originalContent, err := tools.ReadFile(filePath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read original file for diff: %w", err)
+		}
+		
+		a.ToolLog("editing file", filePath)
 		a.debugLog("Editing file: %s\n", filePath)
 		result, err := tools.EditFile(filePath, oldString, newString)
+		
+		if err == nil {
+			// Read the new content and show diff
+			newContent, readErr := tools.ReadFile(filePath)
+			if readErr == nil {
+				a.ShowColoredDiff(originalContent, newContent, 50)
+			}
+		}
+		
 		a.debugLog("Edit file result: %s, error: %v\n", result, err)
 		return result, err
 
@@ -385,6 +466,7 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		if prio, ok := args["priority"].(string); ok {
 			priority = prio
 		}
+		a.ToolLog("adding todo", title)
 		a.debugLog("Adding todo: %s\n", title)
 		result := tools.AddTodo(title, description, priority)
 		a.debugLog("Add todo result: %s\n", result)
@@ -399,12 +481,14 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("invalid status argument")
 		}
+		a.ToolLog("updating todo", fmt.Sprintf("%s -> %s", id, status))
 		a.debugLog("Updating todo %s to %s\n", id, status)
 		result := tools.UpdateTodoStatus(id, status)
 		a.debugLog("Update todo result: %s\n", result)
 		return result, nil
 
 	case "list_todos":
+		a.ToolLog("listing todos", "")
 		a.debugLog("Listing todos\n")
 		result := tools.ListTodos()
 		a.debugLog("List todos result: %s\n", result)
@@ -429,9 +513,6 @@ func (a *Agent) GetLastAssistantMessage() string {
 }
 
 func (a *Agent) PrintConversationSummary() {
-	// if !a.debug {
-	// 	return
-	// }
 
 	fmt.Println("\n=== Conversation Summary ===")
 	assistantMsgCount := 0
