@@ -116,9 +116,24 @@ func (c *Client) SendChatRequest(req ChatRequest) (*ChatResponse, error) {
 	
 	// Use harmony format only for GPT-OSS models
 	if IsGPTOSSModel(req.Model) {
-		// Convert to harmony format for gpt-oss models
-		formatter := NewHarmonyFormatter()
-		harmonyText := formatter.FormatMessagesForCompletion(req.Messages, req.Tools)
+		// Convert to ENHANCED harmony format
+		var formatter *HarmonyFormatter
+		if req.Reasoning != "" {
+			formatter = NewHarmonyFormatterWithReasoning(req.Reasoning)
+		} else {
+			formatter = NewHarmonyFormatter()
+		}
+		
+		// Configure harmony options based on request
+		opts := &HarmonyOptions{
+			ReasoningLevel: req.Reasoning,
+			EnableAnalysis: true, // Enable analysis channel for better reasoning
+		}
+		if opts.ReasoningLevel == "" {
+			opts.ReasoningLevel = "high" // default
+		}
+		
+		harmonyText := formatter.FormatMessagesForCompletion(req.Messages, req.Tools, opts)
 
 		// Create a single message with harmony-formatted text
 		finalReq = ChatRequest{
@@ -174,6 +189,15 @@ func (c *Client) SendChatRequest(req ChatRequest) (*ChatResponse, error) {
 	var chatResp ChatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	// Post-process harmony responses
+	if IsGPTOSSModel(req.Model) {
+		formatter := NewHarmonyFormatter()
+		// Add return token if not present
+		for i, choice := range chatResp.Choices {
+			chatResp.Choices[i].Message.Content = formatter.AddReturnToken(choice.Message.Content)
+		}
 	}
 
 	return &chatResp, nil

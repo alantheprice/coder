@@ -6,31 +6,69 @@ import (
 )
 
 // HarmonyFormatter handles conversion from OpenAI format to harmony format
-type HarmonyFormatter struct{}
+type HarmonyFormatter struct {
+	reasoningLevel string // low, medium, high
+}
+
+// HarmonyOptions configures the harmony formatting
+type HarmonyOptions struct {
+	ReasoningLevel string // "low", "medium", "high" - defaults to "high"
+	EnableAnalysis bool   // Whether to enable analysis channel guidance
+}
 
 // FormatMessagesForCompletion converts OpenAI-style messages to harmony format
-func (h *HarmonyFormatter) FormatMessagesForCompletion(messages []Message, tools []Tool) string {
+func (h *HarmonyFormatter) FormatMessagesForCompletion(messages []Message, tools []Tool, opts *HarmonyOptions) string {
+	if opts == nil {
+		opts = &HarmonyOptions{
+			ReasoningLevel: "high",
+			EnableAnalysis: true,
+		}
+	}
+	
+	// Ensure default reasoning level is set
+	if opts.ReasoningLevel == "" {
+		opts.ReasoningLevel = "high"
+	}
+
+	// Validate messages
+	if err := h.validateMessages(messages); err != nil {
+		// Log error but continue with available messages
+		fmt.Printf("Warning: Message validation failed: %v\n", err)
+	}
+
 	var result strings.Builder
 
-	for _, msg := range messages {
+	// Process messages with proper channel support
+	for i, msg := range messages {
 		switch msg.Role {
 		case "system":
-			result.WriteString(fmt.Sprintf("<|start|>system<|message|>%s<|end|>\n\n", msg.Content))
+			// Add reasoning level to system message
+			systemContent := msg.Content
+			if opts.ReasoningLevel != "" {
+				systemContent += fmt.Sprintf("\n\nReasoning: %s", opts.ReasoningLevel)
+			}
+			result.WriteString(fmt.Sprintf("<|start|>system<|message|>%s<|end|>\n\n", systemContent))
 		case "user":
 			result.WriteString(fmt.Sprintf("<|start|>user<|message|>%s<|end|>", msg.Content))
+			// Add newlines only if not the last message
+			if i < len(messages)-1 {
+				result.WriteString("\n\n")
+			}
 		case "assistant":
+			// Assistant messages should specify channel
 			result.WriteString(fmt.Sprintf("<|start|>assistant<|channel|>final<|message|>%s<|end|>\n\n", msg.Content))
+		case "developer":
+			result.WriteString(fmt.Sprintf("<|start|>developer<|message|>%s<|end|>\n\n", msg.Content))
 		}
 	}
 
 	// Add tools to developer message if provided
 	if len(tools) > 0 {
-		result.WriteString("<|start|>developer<|message|># Tools\n\n")
+		result.WriteString("<|start|>developer<|message|># Available Tools\n\n")
 		result.WriteString("## functions\n\n")
 		result.WriteString("namespace functions {\n\n")
 
 		for _, tool := range tools {
-			// Convert tool definition to TypeScript-like format
 			if tool.Type == "function" {
 				result.WriteString(fmt.Sprintf("// %s\ntype %s = (%s) => any;\n\n",
 					tool.Function.Description,
@@ -39,27 +77,26 @@ func (h *HarmonyFormatter) FormatMessagesForCompletion(messages []Message, tools
 			}
 		}
 
-		result.WriteString("} // namespace functions<|end|>")
+		result.WriteString("} // namespace functions\n\n")
+		
+		// Add tool calling instructions
+		result.WriteString("## Tool Calling Instructions\n\n")
+		result.WriteString("Call tools in the commentary channel using this format:\n")
+		result.WriteString("`<|start|>assistant<|channel|>commentary to=functions.TOOL_NAME <|constrain|>json<|message|>{\"param\": \"value\"}<|call|>`\n\n")
+		result.WriteString("After tool execution, provide your analysis in the analysis channel if needed, then give the final response in the final channel.<|end|>\n\n")
 	}
 
-	// Start assistant response with comprehensive tool calling guidance
-	result.WriteString("<|start|>assistant\n\n")
-	result.WriteString("You can call tools by responding with a JSON object containing tool_calls. Use EXACTLY these formats:\n\n")
+	// Start assistant response with proper channel guidance
+	result.WriteString("<|start|>assistant")
 	
-	// Provide specific examples for each tool
-	result.WriteString("**Shell command:**\n")
-	result.WriteString("{\"tool_calls\": [{\"id\": \"call_1\", \"type\": \"function\", \"function\": {\"name\": \"shell_command\", \"arguments\": \"{\\\"command\\\": \\\"ls -la\\\"}\"}}]}\n\n")
-	
-	result.WriteString("**Read file:**\n")
-	result.WriteString("{\"tool_calls\": [{\"id\": \"call_1\", \"type\": \"function\", \"function\": {\"name\": \"read_file\", \"arguments\": \"{\\\"file_path\\\": \\\"filename.go\\\"}\"}}]}\n\n")
-	
-	result.WriteString("**Edit file:**\n")
-	result.WriteString("{\"tool_calls\": [{\"id\": \"call_1\", \"type\": \"function\", \"function\": {\"name\": \"edit_file\", \"arguments\": \"{\\\"file_path\\\": \\\"filename.go\\\", \\\"old_string\\\": \\\"exact text\\\", \\\"new_string\\\": \\\"replacement\\\"}\"}}]}\n\n")
-	
-	result.WriteString("**Write file:**\n")
-	result.WriteString("{\"tool_calls\": [{\"id\": \"call_1\", \"type\": \"function\", \"function\": {\"name\": \"write_file\", \"arguments\": \"{\\\"file_path\\\": \\\"filename.go\\\", \\\"content\\\": \\\"file contents\\\"}\"}}]}\n\n")
-	
-	result.WriteString("CRITICAL: Copy these formats exactly. Never use other tool names like 'exec', 'bash', 'cmd', 'open_file', etc.\n\n")
+	if opts.EnableAnalysis {
+		result.WriteString("<|channel|>analysis<|message|>")
+		result.WriteString("Let me analyze this request and plan my approach...")
+		result.WriteString("<|end|>\n\n")
+		result.WriteString("<|start|>assistant<|channel|>final<|message|>")
+	} else {
+		result.WriteString("<|channel|>final<|message|>")
+	}
 
 	return result.String()
 }
@@ -75,6 +112,18 @@ func (h *HarmonyFormatter) formatToolParameters(params interface{}) string {
 		if props, exists := paramsMap["properties"]; exists {
 			if propsMap, ok := props.(map[string]interface{}); ok {
 				var paramParts []string
+				// Get required fields for better typing
+				requiredFields := make(map[string]bool)
+				if req, exists := paramsMap["required"]; exists {
+					if reqSlice, ok := req.([]interface{}); ok {
+						for _, field := range reqSlice {
+							if fieldStr, ok := field.(string); ok {
+								requiredFields[fieldStr] = true
+							}
+						}
+					}
+				}
+				
 				for paramName, paramDef := range propsMap {
 					if defMap, ok := paramDef.(map[string]interface{}); ok {
 						paramType := "string" // default
@@ -83,7 +132,12 @@ func (h *HarmonyFormatter) formatToolParameters(params interface{}) string {
 								paramType = typeStr
 							}
 						}
-						paramParts = append(paramParts, fmt.Sprintf("%s: %s", paramName, paramType))
+						// Add optional marker if not required
+						optionalMarker := ""
+						if !requiredFields[paramName] {
+							optionalMarker = "?"
+						}
+						paramParts = append(paramParts, fmt.Sprintf("%s%s: %s", paramName, optionalMarker, paramType))
 					}
 				}
 				if len(paramParts) > 0 {
@@ -96,7 +150,51 @@ func (h *HarmonyFormatter) formatToolParameters(params interface{}) string {
 	return "_: any"
 }
 
+// validateMessages performs basic validation on messages
+func (h *HarmonyFormatter) validateMessages(messages []Message) error {
+	if len(messages) == 0 {
+		return fmt.Errorf("no messages provided")
+	}
+	
+	validRoles := map[string]bool{
+		"system": true, "user": true, "assistant": true, "developer": true, "tool": true,
+	}
+	
+	for i, msg := range messages {
+		if !validRoles[msg.Role] {
+			return fmt.Errorf("invalid role '%s' at message %d", msg.Role, i)
+		}
+		if strings.TrimSpace(msg.Content) == "" {
+			return fmt.Errorf("empty content at message %d", i)
+		}
+	}
+	
+	return nil
+}
+
+// AddReturnToken adds the completion token to a harmony response
+func (h *HarmonyFormatter) AddReturnToken(response string) string {
+	if !strings.HasSuffix(response, "<|return|>") {
+		return response + "<|return|>"
+	}
+	return response
+}
+
+// ConvertReturnToEnd converts <|return|> tokens to <|end|> for conversation history
+func (h *HarmonyFormatter) ConvertReturnToEnd(conversation string) string {
+	return strings.ReplaceAll(conversation, "<|return|>", "<|end|>")
+}
+
 // NewHarmonyFormatter creates a new harmony formatter
 func NewHarmonyFormatter() *HarmonyFormatter {
-	return &HarmonyFormatter{}
+	return &HarmonyFormatter{
+		reasoningLevel: "high",
+	}
+}
+
+// NewHarmonyFormatterWithReasoning creates a harmony formatter with specific reasoning level
+func NewHarmonyFormatterWithReasoning(reasoning string) *HarmonyFormatter {
+	return &HarmonyFormatter{
+		reasoningLevel: reasoning,
+	}
 }

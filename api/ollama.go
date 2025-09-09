@@ -36,9 +36,24 @@ func NewOllamaClient() (*LocalOllamaClient, error) {
 }
 
 func (c *LocalOllamaClient) SendChatRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error) {
-	// Convert to harmony format for gpt-oss models
-	formatter := NewHarmonyFormatter()
-	harmonyText := formatter.FormatMessagesForCompletion(messages, tools)
+	// Convert to ENHANCED harmony format
+	var formatter *HarmonyFormatter
+	if reasoning != "" {
+		formatter = NewHarmonyFormatterWithReasoning(reasoning)
+	} else {
+		formatter = NewHarmonyFormatter()
+	}
+	
+	// Configure harmony options
+	opts := &HarmonyOptions{
+		ReasoningLevel: reasoning,
+		EnableAnalysis: true,
+	}
+	if opts.ReasoningLevel == "" {
+		opts.ReasoningLevel = "high"
+	}
+	
+	harmonyText := formatter.FormatMessagesForCompletion(messages, tools, opts)
 
 	// Create a single message with harmony-formatted text
 	req := map[string]interface{}{
