@@ -247,6 +247,11 @@ func processQuery(chatAgent *agent.Agent, query string, debug bool) {
 		return
 	}
 	
+	// Validate input length before sending to LLM
+	if !validateQueryLength(query) {
+		return
+	}
+	
 	debugLog(debug, "\n🔍 Processing your query...\n")
 	debugLog(debug, "Query: %s\n", query)
 	debugLog(debug, "=====================================\n")
@@ -269,6 +274,36 @@ func processQuery(chatAgent *agent.Agent, query string, debug bool) {
 	if err := chatAgent.SaveState("default"); err != nil {
 		debugLog(debug, "Warning: Failed to save conversation state: %v\n", err)
 	}
+}
+
+// validateQueryLength validates query length and prompts for confirmation if needed
+func validateQueryLength(query string) bool {
+	queryLen := len(strings.TrimSpace(query))
+	
+	// Absolute minimum: reject anything under 3 characters
+	if queryLen < 3 {
+		fmt.Printf("❌ Query too short (%d characters). Minimum 3 characters required.\n", queryLen)
+		return false
+	}
+	
+	// For queries under 20 characters, ask for confirmation
+	if queryLen < 20 {
+		fmt.Printf("⚠️  Short query detected (%d characters): \"%s\"\n", queryLen, query)
+		fmt.Print("Are you sure you want to process this? (y/N): ")
+		
+		var response string
+		fmt.Scanln(&response)
+		response = strings.ToLower(strings.TrimSpace(response))
+		
+		if response != "y" && response != "yes" {
+			fmt.Println("❌ Query cancelled.")
+			return false
+		}
+		
+		fmt.Println("✅ Proceeding with short query...")
+	}
+	
+	return true
 }
 
 func printHelp() {
