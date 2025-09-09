@@ -380,5 +380,81 @@ func GetToolDefinitions() []Tool {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: struct {
+				Name        string      `json:"name"`
+				Description string      `json:"description"`
+				Parameters  interface{} `json:"parameters"`
+			}{
+				Name:        "add_bulk_todos",
+				Description: "Add multiple todo items at once for better efficiency",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"todos": map[string]interface{}{
+							"type": "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"title": map[string]interface{}{
+										"type":        "string",
+										"description": "Brief title of the todo item",
+									},
+									"description": map[string]interface{}{
+										"type":        "string",
+										"description": "Optional detailed description",
+									},
+									"priority": map[string]interface{}{
+										"type":        "string",
+										"description": "Priority level: high, medium, low",
+									},
+								},
+								"required": []string{"title"},
+							},
+							"description": "Array of todo items to add",
+						},
+					},
+					"required": []string{"todos"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: struct {
+				Name        string      `json:"name"`
+				Description string      `json:"description"`
+				Parameters  interface{} `json:"parameters"`
+			}{
+				Name:        "auto_complete_todos",
+				Description: "Automatically complete todos based on context (e.g., after successful build)",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"context": map[string]interface{}{
+							"type":        "string",
+							"description": "Context trigger: build_success, test_success, file_written",
+						},
+					},
+					"required": []string{"context"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: struct {
+				Name        string      `json:"name"`
+				Description string      `json:"description"`
+				Parameters  interface{} `json:"parameters"`
+			}{
+				Name:        "get_next_todo",
+				Description: "Get the next logical todo to work on based on priority and current state",
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+					"required":   []string{},
+				},
+			},
+		},
 	}
 }
