@@ -150,14 +150,19 @@ func (c *CommitCommand) executeMultiFileCommit(chatAgent *agent.Agent) error {
 		return nil
 	}
 
-	// Use the agent to generate a commit message
-	commitPrompt := fmt.Sprintf(`Generate a concise commit message for the following staged changes. 
+	// Use the agent to generate a commit message following gmitllm rules
+	commitPrompt := fmt.Sprintf(`Generate a concise git commit message for the following staged changes.
 
-Requirements:
-- Title: Maximum 120 characters, descriptive and concise
-- Blank line after title
-- Summary: 200 words or less, brief description of changes
-- Focus on what changed and why, not how
+IMPORTANT: Do NOT use any tools. Rely SOLELY on the staged diff provided below.
+
+Follow these exact rules:
+1. First, generate a short title starting with an action word (Adds, Updates, Deletes, Renames)
+2. Title must be under 72 characters, no colons, no markdown
+3. Title should not include filenames
+4. Then generate a description paragraph under 500 characters
+5. Description should not include code blocks or filenames
+6. No markdown formatting anywhere
+7. Format: [Title]\n\n[Description]
 
 Staged changes:
 %s
@@ -305,6 +310,8 @@ func (c *CommitCommand) executeSingleFileCommit(args []string, chatAgent *agent.
 	// Use the agent to generate a commit message
 	commitPrompt := fmt.Sprintf(`Generate a concise commit message for changes to the file "%s".
 
+IMPORTANT: Do NOT use any tools. Rely SOLELY on the staged diff provided below.
+
 Requirements:
 - Title: Maximum 120 characters, descriptive and concise
 - Blank line after title
@@ -326,20 +333,18 @@ Please generate only the commit message content, no additional commentary.`, fil
 	// Clean up the commit message
 	commitMessage = strings.TrimSpace(commitMessage)
 	
-	// Step 6: Show preview and confirm
-	fmt.Println("\n📋 Commit message preview:")
-	fmt.Println("=============================================")
-	fmt.Println(commitMessage)
-	fmt.Println("=============================================")
-
-	fmt.Println("\n💡 Commit with this message? (y/n):")
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(strings.ToLower(confirm))
-
-	if confirm != "y" && confirm != "yes" {
+	// Use the commit utility to handle confirmation, editing, and retry
+	finalCommitMessage, shouldCommit, err := handleCommitConfirmation(commitMessage, chatAgent, reader, diffOutput, fileToAdd)
+	if err != nil {
+		return fmt.Errorf("commit confirmation failed: %v", err)
+	}
+	
+	if !shouldCommit {
 		fmt.Println("❌ Commit cancelled")
 		return nil
 	}
+	
+	commitMessage = finalCommitMessage
 
 	// Step 7: Create the commit
 	fmt.Println("\n💾 Creating commit...")
@@ -389,4 +394,154 @@ Multi-file workflow:
 - Commits all selected files together
 `)
 	return nil
+}
+
+// handleCommitConfirmation handles the commit message confirmation, editing, and retry logic
+func handleCommitConfirmation(commitMessage string, chatAgent *agent.Agent, reader *bufio.Reader, diffOutput []byte, contextInfo string) (string, bool, error) {
+	maxRetries := 3
+	retryCount := 0
+	
+	for {
+		// Show preview
+		fmt.Println("\n📋 Commit message preview:")
+		fmt.Println("=============================================")
+		fmt.Println(commitMessage)
+		fmt.Println("=============================================")
+
+		// Prompt for action
+		fmt.Println("\n💡 Options:")
+		fmt.Println("  y - Commit with this message")
+		fmt.Println("  n - Cancel commit")
+		fmt.Println("  e - Edit message in default editor")
+		if retryCount < maxRetries {
+			fmt.Println("  r - Retry AI generation")
+		}
+		fmt.Print("Choose an option: ")
+		
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+
+		switch input {
+		case "y", "yes":
+			return commitMessage, true, nil
+			
+		case "n", "no":
+			return "", false, nil
+			
+		case "e", "edit":
+			// Edit via default editor
+			editedMessage, err := editCommitMessageInEditor(commitMessage)
+			if err != nil {
+				fmt.Printf("❌ Failed to edit message: %v\n", err)
+				continue
+			}
+			commitMessage = editedMessage
+			fmt.Println("✅ Message edited successfully")
+			
+		case "r", "retry":
+			if retryCount >= maxRetries {
+				fmt.Println("❌ Maximum retry attempts reached")
+				continue
+			}
+			
+			// Retry AI generation
+			retryCount++
+			fmt.Printf("🔄 Retrying AI generation (attempt %d/%d)...\n", retryCount, maxRetries)
+			
+			var retryPrompt string
+			if contextInfo != "" {
+				// Single file context
+				retryPrompt = fmt.Sprintf(`Generate a concise commit message for changes to the file "%s".
+
+IMPORTANT: Do NOT use any tools. Rely SOLELY on the staged diff provided below.
+
+Requirements:
+- Title: Maximum 120 characters, descriptive and concise
+- Blank line after title
+- Summary: 200 words or less, brief description of changes
+- Focus on what changed in this specific file and why, not how
+- Include the filename in the summary if appropriate
+
+Staged changes for %s:
+%s
+
+Please generate only the commit message content, no additional commentary.`, contextInfo, contextInfo, string(diffOutput))
+			} else {
+				// Multi-file context
+				retryPrompt = fmt.Sprintf(`Generate a concise git commit message for the following staged changes.
+
+IMPORTANT: Do NOT use any tools. Rely SOLELY on the staged diff provided below.
+
+Follow these exact rules:
+1. First, generate a short title starting with an action word (Adds, Updates, Deletes, Renames)
+2. Title must be under 72 characters, no colons, no markdown
+3. Title should not include filenames
+4. Then generate a description paragraph under 500 characters
+5. Description should not include code blocks or filenames
+6. No markdown formatting anywhere
+7. Format: [Title]\n\n[Description]
+
+Staged changes:
+%s
+
+Please generate only the commit message content, no additional commentary.`, string(diffOutput))
+			}
+			
+			newMessage, err := chatAgent.ProcessQuery(retryPrompt)
+			if err != nil {
+				fmt.Printf("❌ Failed to regenerate commit message: %v\n", err)
+				continue
+			}
+			commitMessage = strings.TrimSpace(newMessage)
+			fmt.Println("✅ Message regenerated successfully")
+			
+		default:
+			fmt.Println("❌ Invalid option. Please choose y, n, e, or r")
+		}
+	}
+}
+
+// editCommitMessageInEditor opens the commit message in the user's default editor
+func editCommitMessageInEditor(initialMessage string) (string, error) {
+	// Create temporary file
+	tempFile := ".commit_msg_edit.txt"
+	err := os.WriteFile(tempFile, []byte(initialMessage), 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary file: %v", err)
+	}
+	defer os.Remove(tempFile)
+
+	// Determine editor (use $EDITOR or fallback to vim/nano)
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		// Try common editors
+		if _, err := exec.LookPath("vim"); err == nil {
+			editor = "vim"
+		} else if _, err := exec.LookPath("nano"); err == nil {
+			editor = "nano"
+		} else if _, err := exec.LookPath("code"); err == nil {
+			editor = "code"
+		} else {
+			return "", fmt.Errorf("no editor found. Please set $EDITOR environment variable")
+		}
+	}
+
+	// Open editor
+	cmd := exec.Command(editor, tempFile)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	
+	err = cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("editor failed: %v", err)
+	}
+
+	// Read edited content
+	editedContent, err := os.ReadFile(tempFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to read edited file: %v", err)
+	}
+
+	return strings.TrimSpace(string(editedContent)), nil
 }
