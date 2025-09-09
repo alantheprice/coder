@@ -29,6 +29,9 @@ func NewCommandRegistry() *CommandRegistry {
 	registry.Register(&HelpCommand{registry: registry})
 	registry.Register(&ModelsCommand{})
 	registry.Register(&ContinuityCommand{})
+	registry.Register(&InitCommand{})
+	registry.Register(&ExitCommand{})
+	registry.Register(&CommitCommand{})
 
 	return registry
 }

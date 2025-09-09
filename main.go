@@ -237,6 +237,10 @@ SLASH COMMANDS (Interactive Mode):
   /models              List available models and select model to use
   /models select       Interactive model selection
   /models <model_id>   Set model directly
+  /init                Generate or regenerate project context
+  /commit              Interactive commit workflow - select files and generate commit messages
+  /continuity          Show conversation continuity information
+  /exit                Exit the interactive session
 
 INPUT FEATURES:
   - Arrow keys for navigation and command history

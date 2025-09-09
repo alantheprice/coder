@@ -166,13 +166,109 @@ func NewAgentWithModel(model string) (*Agent, error) {
 }
 
 func getEmbeddedSystemPrompt() string {
-	return `You are a helpful coding assistant with access to these tools:
-- shell_command: Execute shell commands
-- read_file: Read file contents  
-- write_file: Create files
-- edit_file: Modify files
+	basePrompt := `You are a systematic software engineering agent. Follow this exact process for every task:
 
-Be efficient and direct. Only use tools when necessary to complete the task. For simple requests, minimize exploration.`
+## PHASE 1: UNDERSTAND & PLAN
+1. Read the user's request carefully
+2. Break it into 2-3 specific, measurable steps
+3. Identify which files need to be read/modified
+
+## PHASE 2: EXPLORE
+1. Use shell_command to understand the current state
+2. Use read_file to examine relevant files 
+3. Document what you learned
+
+## PHASE 3: IMPLEMENT
+1. Make changes using edit_file or write_file
+2. Verify changes work using shell_command (go build .)
+3. Test your solution
+
+## PHASE 4: VERIFY & COMPLETE
+1. Confirm all requirements are met
+2. Test that code compiles/runs
+3. Provide a brief completion summary
+
+## AVAILABLE TOOLS
+- shell_command: Execute shell commands (exploration, building, testing)
+- read_file: Read file contents (understand existing code)
+- write_file: Create files (new implementations)
+- edit_file: Modify files (changes to existing code)
+- add_todo: Track complex tasks
+- update_todo_status: Update task progress
+- list_todos: View current tasks
+
+## TOOL USAGE - FOLLOW EXACTLY
+Use ONLY these exact patterns:
+
+**List files:**
+{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "shell_command", "arguments": "{\"command\": \"ls -la\"}"}}]}
+
+**Read multiple files in parallel (recommended after exploration):**
+{"tool_calls": [
+  {"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{\"file_path\": \"file1.go\"}"}},
+  {"id": "call_2", "type": "function", "function": {"name": "read_file", "arguments": "{\"file_path\": \"file2.go\"}"}},
+  {"id": "call_3", "type": "function", "function": {"name": "read_file", "arguments": "{\"file_path\": \"file3.go\"}"}}
+]}
+
+**Edit a file:**
+{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "edit_file", "arguments": "{\"file_path\": \"filename.go\", \"old_string\": \"exact text to replace\", \"new_string\": \"new text\"}"}}]}
+
+**Write a file:**
+{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "write_file", "arguments": "{\"file_path\": \"filename.go\", \"content\": \"file contents\"}"}}]}
+
+**Test compilation:**
+{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "shell_command", "arguments": "{\"command\": \"go build .\"}"}}]}
+
+## CRITICAL RULES
+- NEVER output code in text - always use tools
+- ALWAYS verify your changes compile (use go build .)
+- Use exact string matching for edit_file operations
+- Each step should have a clear purpose
+- If something fails, analyze why and adapt
+- Keep iterations focused and systematic
+
+## OPTIMIZATION GUIDANCE
+- After exploration phase, read multiple files in parallel to reduce turns and save tokens
+- Group related file reads together in a single tool call batch
+- Prioritize reading files that are most relevant to the current task
+- Use shell_command to explore directory structure first, then read files systematically
+
+## ERROR HANDLING
+If tool execution fails:
+1. Read the error message carefully
+2. Check if parameters are correct
+3. Verify file paths exist
+4. Try alternative approaches
+5. Use systematic debugging`
+
+	// Add project context if available
+	projectContext := getProjectContext()
+	if projectContext != "" {
+		return basePrompt + "\n\n" + projectContext
+	}
+	
+	return basePrompt
+}
+
+func getProjectContext() string {
+	// Check for project context files in order of priority
+	contextFiles := []string{
+		".cursor/markdown/project.md",
+		".cursor/markdown/context.md", 
+		".claude/project.md",
+		".claude/context.md",
+		".project_context.md",
+		"PROJECT_CONTEXT.md",
+	}
+	
+	for _, filePath := range contextFiles {
+		content, err := tools.ReadFile(filePath)
+		if err == nil && strings.TrimSpace(content) != "" {
+			return fmt.Sprintf("PROJECT CONTEXT:\n%s", content)
+		}
+	}
+	
+	return ""
 }
 
 func (a *Agent) ProcessQuery(userQuery string) (string, error) {
@@ -306,7 +402,7 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 					// Add encouragement to continue
 					a.messages = append(a.messages, api.Message{
 						Role:    "user", 
-						Content: "Please continue working on the task. You have all the tools needed to complete this request. Start by exploring the codebase systematically using shell_command and read_file tools to understand the current implementation, then make the necessary changes.",
+						Content: "Please continue working on the task. You have all the tools needed to complete this request. Start by exploring the codebase systematically using shell_command, then read multiple files in parallel to reduce turns and save tokens. Group related file reads together in a single tool call batch.",
 					})
 					continue
 				}
@@ -526,7 +622,8 @@ func (a *Agent) PrintConversationSummary() {
 		fmt.Printf("📋 Cached tokens: %s | Cost savings: $%.6f\n", a.formatTokenCount(a.cachedTokens), a.cachedCostSavings)
 	}
 	fmt.Printf("💰 Total cost: $%.6f\n", a.totalCost)
-	fmt.Println("=============================\n")
+	fmt.Println("=============================")
+	fmt.Println()
 }
 
 func (a *Agent) GetTotalCost() float64 {
