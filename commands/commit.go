@@ -95,9 +95,11 @@ func (c *CommitCommand) executeMultiFileCommit(chatAgent *agent.Agent) error {
 	if input == "a" || input == "all" {
 		// Add all modified files
 		for _, line := range validStatusLines {
-			// Git porcelain format: first 2 chars are status, then space, then filename
-			if len(line) > 3 {
-				filename := strings.TrimSpace(line[3:]) // Skip first 3 characters (XX )
+			// Split on spaces and take everything after the status field
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				// Join all parts except the first (status) to handle filenames with spaces
+				filename := strings.Join(parts[1:], " ")
 				filesToAdd = append(filesToAdd, filename)
 			}
 		}
@@ -119,9 +121,11 @@ func (c *CommitCommand) executeMultiFileCommit(chatAgent *agent.Agent) error {
 			}
 			
 			line := validStatusLines[index-1]
-			// Git porcelain format: first 2 chars are status, then space, then filename
-			if len(line) > 3 {
-				filename := strings.TrimSpace(line[3:]) // Skip first 3 characters (XX )
+			// Split on spaces and take everything after the status field
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				// Join all parts except the first (status) to handle filenames with spaces
+				filename := strings.Join(parts[1:], " ")
 				filesToAdd = append(filesToAdd, filename)
 				fmt.Printf("✅ Adding: %s\n", filename)
 			}
@@ -188,20 +192,18 @@ Please generate only the commit message content, no additional commentary.`, str
 	// Clean up the commit message
 	commitMessage = strings.TrimSpace(commitMessage)
 	
-	// Step 6: Show preview and confirm
-	fmt.Println("\n📋 Commit message preview:")
-	fmt.Println("=============================================")
-	fmt.Println(commitMessage)
-	fmt.Println("=============================================")
-
-	fmt.Println("\n💡 Commit with this message? (y/n):")
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(strings.ToLower(confirm))
-
-	if confirm != "y" && confirm != "yes" {
+	// Use the commit utility to handle confirmation, editing, and retry
+	finalCommitMessage, shouldCommit, err := handleCommitConfirmation(commitMessage, chatAgent, reader, diffOutput, "")
+	if err != nil {
+		return fmt.Errorf("commit confirmation failed: %v", err)
+	}
+	
+	if !shouldCommit {
 		fmt.Println("❌ Commit cancelled")
 		return nil
 	}
+	
+	commitMessage = finalCommitMessage
 
 	// Step 7: Create the commit
 	fmt.Println("\n💾 Creating commit...")
@@ -284,12 +286,14 @@ func (c *CommitCommand) executeSingleFileCommit(args []string, chatAgent *agent.
 
 	// Extract filename from git status line
 	line := validStatusLines[index-1]
-	if len(line) <= 3 {
+	// Split on spaces and take everything after the status field
+	parts := strings.Fields(line)
+	if len(parts) < 2 {
 		return fmt.Errorf("invalid git status line format: %s", line)
 	}
 
-	// Git porcelain format: first 2 chars are status, then space, then filename
-	fileToAdd := strings.TrimSpace(line[3:]) // Skip first 3 characters (XX )
+	// Join all parts except the first (status) to handle filenames with spaces
+	fileToAdd := strings.Join(parts[1:], " ")
 	fmt.Printf("✅ Selected: %s\n", fileToAdd)
 
 	// Step 4: Stage the selected file

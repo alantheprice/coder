@@ -602,7 +602,41 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("invalid status argument")
 		}
-		a.ToolLog("updating todo", fmt.Sprintf("%s -> %s", id, status))
+		// Show better ToolLog message based on status
+		var logMessage string
+		switch status {
+		case "in_progress":
+			// Extract the todo title for a better message
+			todoTitle := ""
+			for _, item := range tools.GetAllTodos() {
+				if item.ID == id {
+					todoTitle = item.Title
+					break
+				}
+			}
+			if todoTitle != "" {
+				logMessage = fmt.Sprintf("starting %s", todoTitle)
+			} else {
+				logMessage = fmt.Sprintf("starting %s", id)
+			}
+		case "completed":
+			// Extract the todo title for a better message
+			todoTitle := ""
+			for _, item := range tools.GetAllTodos() {
+				if item.ID == id {
+					todoTitle = item.Title
+					break
+				}
+			}
+			if todoTitle != "" {
+				logMessage = fmt.Sprintf("completed %s", todoTitle)
+			} else {
+				logMessage = fmt.Sprintf("completed %s", id)
+			}
+		default:
+			logMessage = fmt.Sprintf("%s -> %s", id, status)
+		}
+		a.ToolLog("todo update", logMessage)
 		a.debugLog("Updating todo %s to %s\n", id, status)
 		result := tools.UpdateTodoStatus(id, status)
 		a.debugLog("Update todo result: %s\n", result)
@@ -658,7 +692,16 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 			todos = append(todos, todo)
 		}
 		
-		a.ToolLog("adding bulk todos", fmt.Sprintf("%d items", len(todos)))
+		// Show the todo titles being created
+		todoTitles := make([]string, len(todos))
+		for i, todo := range todos {
+			todoTitles[i] = todo.Title
+		}
+		if len(todoTitles) <= 3 {
+			a.ToolLog("adding todos", strings.Join(todoTitles, ", "))
+		} else {
+			a.ToolLog("adding todos", fmt.Sprintf("%s, %s, +%d more", todoTitles[0], todoTitles[1], len(todoTitles)-2))
+		}
 		a.debugLog("Adding bulk todos: %d items\n", len(todos))
 		result := tools.AddBulkTodos(todos)
 		a.debugLog("Add bulk todos result: %s\n", result)

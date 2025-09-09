@@ -619,3 +619,14 @@ func SuggestTodos(phase string, taskContext string) []string {
 	
 	return suggestions
 }
+
+// GetAllTodos returns all todo items (for internal use)
+func GetAllTodos() []TodoItem {
+	globalTodoManager.mutex.RLock()
+	defer globalTodoManager.mutex.RUnlock()
+	
+	// Return a copy to avoid race conditions
+	todos := make([]TodoItem, len(globalTodoManager.items))
+	copy(todos, globalTodoManager.items)
+	return todos
+}
