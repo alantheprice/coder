@@ -113,6 +113,11 @@ func (c *LocalOllamaClient) SendChatRequest(messages []Message, tools []Tool, re
 	// Set cost to 0 for local inference
 	chatResp.Usage.EstimatedCost = 0.0
 
+	// Strip return token from GPT-OSS model responses
+	for i, choice := range chatResp.Choices {
+		chatResp.Choices[i].Message.Content = formatter.StripReturnToken(choice.Message.Content)
+	}
+
 	return &chatResp, nil
 }
 

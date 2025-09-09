@@ -202,9 +202,9 @@ func (c *Client) SendChatRequest(req ChatRequest) (*ChatResponse, error) {
 	// Post-process harmony responses
 	if IsGPTOSSModel(req.Model) {
 		formatter := NewHarmonyFormatter()
-		// Add return token if not present
+		// Strip return token from responses before returning to agent
 		for i, choice := range chatResp.Choices {
-			chatResp.Choices[i].Message.Content = formatter.AddReturnToken(choice.Message.Content)
+			chatResp.Choices[i].Message.Content = formatter.StripReturnToken(choice.Message.Content)
 		}
 	}
 

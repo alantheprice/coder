@@ -176,6 +176,11 @@ func (h *HarmonyFormatter) ConvertReturnToEnd(conversation string) string {
 	return strings.ReplaceAll(conversation, "<|return|>", "<|end|>")
 }
 
+// StripReturnToken removes <|return|> tokens from model responses
+func (h *HarmonyFormatter) StripReturnToken(response string) string {
+	return strings.TrimSuffix(strings.TrimSpace(response), "<|return|>")
+}
+
 // NewHarmonyFormatter creates a new harmony formatter
 func NewHarmonyFormatter() *HarmonyFormatter {
 	return &HarmonyFormatter{

@@ -213,10 +213,18 @@ func isShellCommand(input string) bool {
 		}
 	}
 	
-	// Check for commands that might start with variables or paths
+	// Check for shell operators and redirection (but be more specific to avoid false positives)
 	if strings.Contains(input, " && ") || strings.Contains(input, " || ") ||
-		strings.Contains(input, " | ") || strings.Contains(input, ">") ||
-		strings.Contains(input, ">>") || strings.Contains(input, "<") {
+		strings.Contains(input, " | ") {
+		return true
+	}
+	
+	// Check for redirection operators with surrounding spaces or at word boundaries
+	// This avoids matching things like '<|return|>' or 'file<something>'
+	if strings.Contains(input, " > ") || strings.Contains(input, " >> ") ||
+		strings.Contains(input, " < ") || strings.HasSuffix(input, ">") ||
+		strings.HasPrefix(input, ">") || strings.HasSuffix(input, "<") ||
+		strings.HasPrefix(input, "<") {
 		return true
 	}
 	
