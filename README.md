@@ -1,17 +1,17 @@
 # GPT-OSS Chat Agent
 
-A sophisticated command-line coding assistant that provides autonomous programming capabilities using multiple AI models. The agent uses systematic exploration and provides 8 core tools for comprehensive code development, testing, and project management.
+A sophisticated command-line coding assistant that provides autonomous programming capabilities using multiple AI models. The agent uses systematic exploration and provides 7 core tools for comprehensive code development, testing, and project management.
 
 ## Features
 
 - **Autonomous operation** - continues iterating until tasks are completely solved
-- **8 built-in tools** - comprehensive development toolkit
-- **Multi-model support** - works with OpenAI, local Ollama, DeepInfra, and other providers
+- **7 built-in tools** - comprehensive development toolkit
+- **Multi-model support** - works with local Ollama, DeepInfra, and other providers
 - **Systematic exploration** - follows structured phases for problem-solving
-- **Testing & validation** - includes comprehensive test suite and validation tools
 - **Todo management** - built-in project/task tracking system
 - **Real-time feedback** - displays progress, costs, and iteration summaries
 - **Interactive & non-interactive modes** - supports both CLI usage patterns
+- **Conversation continuity** - maintains state across sessions
 
 ## Current Tools Available
 
@@ -24,7 +24,6 @@ A sophisticated command-line coding assistant that provides autonomous programmi
 | **add_todo** | Create and track development tasks | Project management, task planning
 | **update_todo_status** | Update progress on tracked tasks | Progress tracking, completion management
 | **list_todos** | View all current tasks and their status | Task review, sprint management
-| **ask_user** | Prompt for user input when clarification needed | Interactive development, permission queries
 
 ## Supported Models & Providers
 
@@ -111,18 +110,20 @@ exit                # End session
 The project includes comprehensive testing across multiple dimensions:
 
 ```bash
-# Tool-level tests
-./test_tools.sh
-
 # End-to-end integration tests
 ./test_e2e.sh
 
+# Cost tracking tests
+./test_actual_costs.sh
+
+# Cache tracking tests
+./test_cache_tracking.sh
+
+# Continuity tests
+./test_continuity.sh
+
 # Manual validation
 ./validate.sh
-
-# Specific test scenarios
-go test -v ./tools/...
-go test -v ./api/...
 ```
 
 ## Project Structure
@@ -131,7 +132,8 @@ go test -v ./api/...
 gpt-oss-chat-agent/
 ├── main.go                          # CLI entry point with argument parsing
 ├── agent/                           # Core agent logic and orchestration
-│   └── agent.go                     # Main agent implementation
+│   ├── agent.go                     # Main agent implementation
+│   └── persistence.go               # State persistence for continuity
 ├── api/                             # API client abstractions
 │   ├── client.go                    # Generic API client interface
 │   ├── ollama.go                    # Ollama local client
@@ -143,19 +145,22 @@ gpt-oss-chat-agent/
 │   ├── read.go                      # File reading functionality
 │   ├── write.go                     # File creation
 │   ├── edit.go                      # Precise file modification
-│   ├── todo.go                      # Task tracking system
-│   ├── ask_user.go                  # User interaction prompts
-│   └── [embedded system prompt]     # System prompt is embedded in code
+│   └── todo.go                      # Task tracking system
 ├── commands/                        # Slash command system
-│   └── registry.go                  # Command handling for interactive mode
+│   ├── commands.go                  # Command registry and handling
+│   ├── continuity.go                # Continuity command
+│   ├── help.go                      # Help command
+│   └── models.go                    # Models command
 ├── test_environment/                # Comprehensive test scenarios
-│   ├── baseline_files/             # Reference implementations
-│   ├── work_scenario_*/            # Test workspaces
+│   ├── baseline_files/              # Reference implementations
+│   ├── work_scenario_*/             # Test workspaces
 │   └── validation scripts
-├── test_tools.sh                   # Tool-level unit tests
-├── test_e2e.sh                     # Integration test suite
-├── validate.sh                     # Code validation helper
-└── [various documentation].md        # Architecture docs
+├── test_e2e.sh                      # Integration test suite
+├── test_actual_costs.sh             # Cost tracking tests
+├── test_cache_tracking.sh           # Cache tracking tests
+├── test_continuity.sh               # Continuity tests
+├── validate.sh                      # Code validation helper
+└── [various documentation].md       # Architecture docs
 ```
 
 ## Development Workflow
@@ -188,7 +193,8 @@ The agent follows these phases for every task:
 - **Live diffs**: Displays file changes with colored diff output  
 - **Task summary**: Lists all actions taken during the session
 - **Cost transparency**: Shows exact token usage and costs
-- **Interactive feedback**: Prompts for user input when needed
+- **Cached token tracking**: Shows cost savings from cached tokens
+- **Continuity support**: Maintains conversation state across sessions
 
 ## Environment Configuration
 
@@ -257,6 +263,7 @@ coder "complex refactoring task"
 - **Input tokens**: Prompt context + conversation history
 - **Output tokens**: Response + tool result integration
 - **Total tracking**: Real-time cost calculation with DeepInfra rates
+- **Cached tokens**: Tracks token reuse for cost savings
 
 ### Local vs Cloud
 | Mode | Speed | Cost | VRAM | Features |
@@ -314,6 +321,7 @@ go build -o coder
 Apache 2.0 License - See LICENSE file for details.
 
 ## Changelog
+- **v2.1** - Added conversation continuity, enhanced cost tracking
 - **v2.0** - Added multi-model support, todo system, comprehensive testing
 - **v1.2** - Enhanced interactive mode with slash commands
 - **v1.1** - Added Ollama local support
