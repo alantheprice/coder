@@ -193,9 +193,12 @@ func getEmbeddedSystemPrompt() string {
 - read_file: Read file contents (understand existing code)
 - write_file: Create files (new implementations)
 - edit_file: Modify files (changes to existing code)
-- add_todo: Track complex tasks
-- update_todo_status: Update task progress
-- list_todos: View current tasks
+- add_bulk_todos: Create multiple tasks at once (PREFERRED for multi-step work)
+- update_todo_status: Update task progress  
+- list_todos: View active tasks (compact format)
+- get_active_todos_compact: Ultra-minimal task view
+- auto_complete_todos: Auto-complete tasks on success (build_success, test_success)
+- archive_completed: Remove completed tasks from context
 
 ## TOOL USAGE - FOLLOW EXACTLY
 Use ONLY these exact patterns:
@@ -219,6 +222,15 @@ Use ONLY these exact patterns:
 **Test compilation:**
 {"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "shell_command", "arguments": "{\"command\": \"go build .\"}"}}]}
 
+**Create multiple todos (REQUIRED for multi-step tasks):**
+{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "add_bulk_todos", "arguments": "{\"todos\": [{\"title\": \"Read main.go\", \"priority\": \"high\"}, {\"title\": \"Add new function\", \"priority\": \"medium\"}, {\"title\": \"Test changes\", \"priority\": \"high\"}]}"}}]}
+
+**Mark task as in-progress BEFORE starting work:**
+{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "update_todo_status", "arguments": "{\"id\": \"todo_1\", \"status\": \"in_progress\"}"}}]}
+
+**Auto-complete after successful build:**
+{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "auto_complete_todos", "arguments": "{\"context\": \"build_success\"}"}}]}
+
 ## CRITICAL RULES
 - NEVER output code in text - always use tools
 - ALWAYS verify your changes compile (use go build .)
@@ -226,6 +238,26 @@ Use ONLY these exact patterns:
 - Each step should have a clear purpose
 - If something fails, analyze why and adapt
 - Keep iterations focused and systematic
+
+## TODO MANAGEMENT - MANDATORY FOR COMPLEX TASKS
+WHEN TO USE TODOS:
+- Any task requiring 3+ steps
+- Multiple files need modification
+- Building/testing is required
+- User requests multiple features
+- When task will take >5 iterations
+
+HOW TO USE TODOS:
+1. START: Create todos with add_bulk_todos for all major steps
+2. BEFORE each step: Mark relevant todo as "in_progress" 
+3. AFTER each step: Mark todo as "completed"
+4. ON SUCCESS: Use auto_complete_todos after builds/tests pass
+5. MAINTAIN: Use archive_completed to clean up context when >10 todos exist
+
+TODO WORKFLOW EXAMPLE:
+→ User asks: "Add error handling to the API"
+→ Create todos: ["Read API code", "Identify error points", "Add error handling", "Test changes"]
+→ Mark "Read API code" in_progress → complete it → mark "Identify error points" in_progress → etc.
 
 ## OPTIMIZATION GUIDANCE
 - After exploration phase, read multiple files in parallel to reduce turns and save tokens
@@ -425,7 +457,7 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 	a.debugLog("🔧 Executing tool: %s with args: %v\n", toolCall.Function.Name, args)
 	
 	// Validate tool name and provide helpful error for common mistakes
-	validTools := []string{"shell_command", "read_file", "write_file", "edit_file", "add_todo", "update_todo_status", "list_todos"}
+	validTools := []string{"shell_command", "read_file", "write_file", "edit_file", "add_todo", "update_todo_status", "list_todos", "add_bulk_todos", "auto_complete_todos", "get_next_todo", "list_all_todos", "get_active_todos_compact", "archive_completed", "update_todo_status_bulk"}
 	isValidTool := false
 	for _, valid := range validTools {
 		if toolCall.Function.Name == valid {
@@ -572,6 +604,129 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		a.debugLog("Listing todos\n")
 		result := tools.ListTodos()
 		a.debugLog("List todos result: %s\n", result)
+		return result, nil
+
+	case "add_bulk_todos":
+		todosRaw, ok := args["todos"]
+		if !ok {
+			return "", fmt.Errorf("missing todos argument")
+		}
+		
+		// Parse the todos array
+		todosSlice, ok := todosRaw.([]interface{})
+		if !ok {
+			return "", fmt.Errorf("todos must be an array")
+		}
+		
+		var todos []struct {
+			Title       string
+			Description string
+			Priority    string
+		}
+		
+		for _, todoRaw := range todosSlice {
+			todoMap, ok := todoRaw.(map[string]interface{})
+			if !ok {
+				return "", fmt.Errorf("each todo must be an object")
+			}
+			
+			todo := struct {
+				Title       string
+				Description string
+				Priority    string
+			}{}
+			
+			if title, ok := todoMap["title"].(string); ok {
+				todo.Title = title
+			}
+			if desc, ok := todoMap["description"].(string); ok {
+				todo.Description = desc
+			}
+			if prio, ok := todoMap["priority"].(string); ok {
+				todo.Priority = prio
+			}
+			
+			todos = append(todos, todo)
+		}
+		
+		a.ToolLog("adding bulk todos", fmt.Sprintf("%d items", len(todos)))
+		a.debugLog("Adding bulk todos: %d items\n", len(todos))
+		result := tools.AddBulkTodos(todos)
+		a.debugLog("Add bulk todos result: %s\n", result)
+		return result, nil
+
+	case "auto_complete_todos":
+		context, ok := args["context"].(string)
+		if !ok {
+			return "", fmt.Errorf("invalid context argument")
+		}
+		a.ToolLog("auto completing todos", context)
+		a.debugLog("Auto completing todos with context: %s\n", context)
+		result := tools.AutoCompleteTodos(context)
+		a.debugLog("Auto complete result: %s\n", result)
+		return result, nil
+
+	case "get_next_todo":
+		a.ToolLog("getting next todo", "")
+		a.debugLog("Getting next todo\n")
+		result := tools.GetNextTodo()
+		a.debugLog("Next todo result: %s\n", result)
+		return result, nil
+
+	case "list_all_todos":
+		a.ToolLog("listing all todos", "full context")
+		result := tools.ListAllTodos()
+		return result, nil
+
+	case "get_active_todos_compact":
+		a.ToolLog("getting active todos", "compact")
+		result := tools.GetActiveTodosCompact()
+		return result, nil
+
+	case "archive_completed":
+		a.ToolLog("archiving completed", "")
+		result := tools.ArchiveCompleted()
+		return result, nil
+
+	case "update_todo_status_bulk":
+		updatesRaw, ok := args["updates"]
+		if !ok {
+			return "", fmt.Errorf("missing updates argument")
+		}
+		
+		updatesSlice, ok := updatesRaw.([]interface{})
+		if !ok {
+			return "", fmt.Errorf("updates must be an array")
+		}
+		
+		var updates []struct {
+			ID     string
+			Status string
+		}
+		
+		for _, updateRaw := range updatesSlice {
+			updateMap, ok := updateRaw.(map[string]interface{})
+			if !ok {
+				return "", fmt.Errorf("each update must be an object")
+			}
+			
+			update := struct {
+				ID     string
+				Status string
+			}{}
+			
+			if id, ok := updateMap["id"].(string); ok {
+				update.ID = id
+			}
+			if status, ok := updateMap["status"].(string); ok {
+				update.Status = status
+			}
+			
+			updates = append(updates, update)
+		}
+		
+		a.ToolLog("bulk status update", fmt.Sprintf("%d items", len(updates)))
+		result := tools.UpdateTodoStatusBulk(updates)
 		return result, nil
 
 	default:
