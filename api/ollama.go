@@ -178,3 +178,7 @@ func (c *LocalOllamaClient) SetModel(model string) error {
 func (c *LocalOllamaClient) GetModel() string {
 	return c.model
 }
+
+func (c *LocalOllamaClient) GetProvider() string {
+	return "ollama"
+}

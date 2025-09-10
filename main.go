@@ -70,20 +70,19 @@ func main() {
 	// Initialize command registry for slash commands
 	cmdRegistry := commands.NewCommandRegistry()
 
-	// Show which client is being used
-	clientType := api.GetClientTypeFromEnv()
-	if clientType == api.OllamaClientType {
+	// Show which provider is being used
+	providerType := api.GetClientTypeFromEnv()
+	providerName := api.GetProviderName(providerType)
+	modelName := chatAgent.GetModel()
+	
+	if providerType == api.OllamaClientType {
 		debugLog(debug, "🏠 Using local gpt-oss:20b model via Ollama\n")
 		debugLog(debug, "💰 Cost: FREE (local inference)\n")
 	} else {
-		modelName := model
-		if modelName == "" {
-			modelName = api.DefaultModel
-		}
 		if api.IsGPTOSSModel(modelName) {
-			debugLog(debug, "☁️  Using %s model via DeepInfra (harmony syntax)\n", modelName)
+			debugLog(debug, "☁️  Using %s model via %s (harmony syntax)\n", modelName, providerName)
 		} else {
-			debugLog(debug, "☁️  Using %s model via DeepInfra (standard format)\n", modelName)
+			debugLog(debug, "☁️  Using %s model via %s (standard format)\n", modelName, providerName)
 		}
 		debugLog(debug, "💰 Cost: Pay per use (see /models for pricing)\n")
 	}
