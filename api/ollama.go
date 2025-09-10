@@ -195,3 +195,37 @@ func (c *LocalOllamaClient) GetModelContextLimit() (int, error) {
 		return 32000, nil  // Conservative default for other local models
 	}
 }
+
+// SupportsVision checks if the current model supports vision
+func (c *LocalOllamaClient) SupportsVision() bool {
+	// Check if we have a vision model available
+	visionModel := c.GetVisionModel()
+	return visionModel != ""
+}
+
+// GetVisionModel returns the vision model for Ollama
+func (c *LocalOllamaClient) GetVisionModel() string {
+	return GetVisionModelForProvider(OllamaClientType)
+}
+
+// SendVisionRequest sends a vision-enabled chat request
+func (c *LocalOllamaClient) SendVisionRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error) {
+	if !c.SupportsVision() {
+		// Fallback to regular chat request if no vision model available
+		return c.SendChatRequest(messages, tools, reasoning)
+	}
+	
+	// Temporarily switch to vision model for this request
+	originalModel := c.model
+	visionModel := c.GetVisionModel()
+	
+	c.model = visionModel
+	
+	// Send the vision request
+	response, err := c.SendChatRequest(messages, tools, reasoning)
+	
+	// Restore original model
+	c.model = originalModel
+	
+	return response, err
+}

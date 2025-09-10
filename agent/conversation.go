@@ -5,14 +5,23 @@ import (
 	"strings"
 
 	"github.com/alantheprice/coder/api"
+	"github.com/alantheprice/coder/tools"
 )
 
 // ProcessQuery handles the main conversation loop with the LLM
 func (a *Agent) ProcessQuery(userQuery string) (string, error) {
-	// Initialize with system prompt and user query
+	// Process any images in the user query first
+	processedQuery, err := a.processImagesInQuery(userQuery)
+	if err != nil {
+		a.debugLog("⚠️ Vision processing failed: %v\n", err)
+		// Continue with original query if vision processing fails
+		processedQuery = userQuery
+	}
+	
+	// Initialize with system prompt and processed user query
 	a.messages = []api.Message{
 		{Role: "system", Content: a.systemPrompt},
-		{Role: "user", Content: userQuery},
+		{Role: "user", Content: processedQuery},
 	}
 
 	a.currentIteration = 0
@@ -276,4 +285,35 @@ func (a *Agent) SetConversationOptimization(enabled bool) {
 // GetOptimizationStats returns optimization statistics
 func (a *Agent) GetOptimizationStats() map[string]interface{} {
 	return a.optimizer.GetOptimizationStats()
+}
+
+// processImagesInQuery detects and processes images in user queries
+func (a *Agent) processImagesInQuery(query string) (string, error) {
+	// Check if vision processing is available
+	if !tools.HasVisionCapability() {
+		// No vision capability available, return original query
+		return query, nil
+	}
+	
+	// Create vision processor
+	processor, err := tools.NewVisionProcessor(a.debug)
+	if err != nil {
+		return query, fmt.Errorf("failed to create vision processor: %w", err)
+	}
+	
+	// Process any images found in the text
+	enhancedQuery, analyses, err := processor.ProcessImagesInText(query)
+	if err != nil {
+		return query, fmt.Errorf("failed to process images: %w", err)
+	}
+	
+	// If images were processed, log the enhancement
+	if len(analyses) > 0 {
+		a.debugLog("🖼️ Processed %d image(s) and enhanced query with vision analysis\n", len(analyses))
+		for _, analysis := range analyses {
+			a.debugLog("  - %s: %s\n", analysis.ImagePath, analysis.Description[:min(100, len(analysis.Description))])
+		}
+	}
+	
+	return enhancedQuery, nil
 }

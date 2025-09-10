@@ -15,6 +15,9 @@ type ClientInterface interface {
 	GetModel() string
 	GetProvider() string
 	GetModelContextLimit() (int, error)
+	SupportsVision() bool
+	GetVisionModel() string
+	SendVisionRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error)
 }
 
 // ClientType represents the type of client to use
@@ -132,6 +135,27 @@ func GetDefaultModelForProvider(clientType ClientType) string {
 		return "deepseek-chat"
 	default:
 		return "deepseek/deepseek-chat" // Default to OpenRouter
+	}
+}
+
+// GetVisionModelForProvider returns the vision-capable model for each provider
+// Returns empty string if provider doesn't support vision
+func GetVisionModelForProvider(clientType ClientType) string {
+	switch clientType {
+	case OpenRouterClientType:
+		return "openai/gpt-4o"
+	case DeepInfraClientType:
+		return "google/gemma-3-27b-it"
+	case OllamaClientType:
+		return "llava:latest" // Popular local vision model
+	case CerebrasClientType:
+		return "" // Cerebras doesn't have vision models yet
+	case GroqClientType:
+		return "llama-3.2-11b-vision-preview" // Groq has vision models
+	case DeepSeekClientType:
+		return "" // DeepSeek doesn't have vision models in their API yet
+	default:
+		return "" // No vision support by default
 	}
 }
 
@@ -337,6 +361,40 @@ func (w *DeepInfraClientWrapper) GetModelContextLimit() (int, error) {
 	default:
 		return 32000, nil  // Conservative default
 	}
+}
+
+func (w *DeepInfraClientWrapper) SupportsVision() bool {
+	// DeepInfra has vision-capable models like Llama-3.2-11B-Vision-Instruct
+	visionModel := w.GetVisionModel()
+	return visionModel != ""
+}
+
+func (w *DeepInfraClientWrapper) GetVisionModel() string {
+	return GetVisionModelForProvider(DeepInfraClientType)
+}
+
+func (w *DeepInfraClientWrapper) SendVisionRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error) {
+	if !w.SupportsVision() {
+		// Fallback to regular chat request if no vision model available
+		return w.SendChatRequest(messages, tools, reasoning)
+	}
+	
+	// Temporarily switch to vision model for this request
+	originalModel := w.GetModel()
+	visionModel := w.GetVisionModel()
+	
+	if err := w.SetModel(visionModel); err != nil {
+		// If we can't set the vision model, fallback to regular request
+		return w.SendChatRequest(messages, tools, reasoning)
+	}
+	
+	// Send the vision request
+	response, err := w.SendChatRequest(messages, tools, reasoning)
+	
+	// Restore original model
+	w.SetModel(originalModel)
+	
+	return response, err
 }
 
 

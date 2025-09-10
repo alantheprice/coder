@@ -83,7 +83,7 @@ func main() {
 	cmdRegistry := commands.NewCommandRegistry()
 
 	// Show which provider is being used
-	providerType := api.GetClientTypeFromEnv()
+	providerType := chatAgent.GetProviderType()
 	providerName := api.GetProviderName(providerType)
 	modelName := chatAgent.GetModel()
 

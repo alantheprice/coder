@@ -21,7 +21,7 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 	a.debugLog("🔧 Executing tool: %s with args: %v\n", toolCall.Function.Name, args)
 	
 	// Validate tool name and provide helpful error for common mistakes
-	validTools := []string{"shell_command", "read_file", "write_file", "edit_file", "add_todo", "update_todo_status", "list_todos", "add_bulk_todos", "auto_complete_todos", "get_next_todo", "list_all_todos", "get_active_todos_compact", "archive_completed", "update_todo_status_bulk"}
+	validTools := []string{"shell_command", "read_file", "write_file", "edit_file", "add_todo", "update_todo_status", "list_todos", "add_bulk_todos", "auto_complete_todos", "get_next_todo", "list_all_todos", "get_active_todos_compact", "archive_completed", "update_todo_status_bulk", "analyze_image"}
 	isValidTool := false
 	for _, valid := range validTools {
 		if toolCall.Function.Name == valid {
@@ -330,6 +330,25 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		
 		a.ToolLog("bulk status update", fmt.Sprintf("%d items", len(updates)))
 		result := tools.UpdateTodoStatusBulk(updates)
+		return result, nil
+
+	case "analyze_image":
+		imagePath, ok := args["image_path"].(string)
+		if !ok {
+			return "", fmt.Errorf("invalid image_path argument")
+		}
+		
+		// Get optional analysis prompt
+		analysisPrompt := ""
+		if prompt, ok := args["analysis_prompt"].(string); ok {
+			analysisPrompt = prompt
+		}
+		
+		a.ToolLog("image analysis", imagePath)
+		result, err := tools.AnalyzeImage(imagePath, analysisPrompt)
+		if err != nil {
+			return "", fmt.Errorf("image analysis failed: %w", err)
+		}
 		return result, nil
 
 	default:

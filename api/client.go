@@ -30,10 +30,17 @@ func IsGPTOSSModel(model string) bool {
 	return strings.HasPrefix(model, "openai/gpt-oss")
 }
 
+type ImageData struct {
+	URL    string `json:"url,omitempty"`    // URL to image
+	Base64 string `json:"base64,omitempty"` // Base64 encoded image data
+	Type   string `json:"type,omitempty"`   // MIME type (image/jpeg, image/png, etc.)
+}
+
 type Message struct {
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Role             string      `json:"role"`
+	Content          string      `json:"content"`
+	ReasoningContent string      `json:"reasoning_content,omitempty"`
+	Images           []ImageData `json:"images,omitempty"` // Support for multiple images
 }
 
 type ToolCall struct {
@@ -48,10 +55,11 @@ type ToolCall struct {
 type Choice struct {
 	Index   int `json:"index"`
 	Message struct {
-		Role             string     `json:"role"`
-		Content          string     `json:"content"`
-		ReasoningContent string     `json:"reasoning_content,omitempty"`
-		ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+		Role             string      `json:"role"`
+		Content          string      `json:"content"`
+		ReasoningContent string      `json:"reasoning_content,omitempty"`
+		Images           []ImageData `json:"images,omitempty"`
+		ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
 	} `json:"message"`
 	FinishReason string `json:"finish_reason"`
 }
@@ -466,6 +474,31 @@ func GetToolDefinitions() []Tool {
 					"type":       "object",
 					"properties": map[string]interface{}{},
 					"required":   []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: struct {
+				Name        string      `json:"name"`
+				Description string      `json:"description"`
+				Parameters  interface{} `json:"parameters"`
+			}{
+				Name:        "analyze_image",
+				Description: "Analyze images for UI design, code screenshots, diagrams, and other visual content to provide structured analysis",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"image_path": map[string]interface{}{
+							"type":        "string",
+							"description": "Path to image file or URL of image to analyze",
+						},
+						"analysis_prompt": map[string]interface{}{
+							"type":        "string",
+							"description": "Optional specific prompt for what to analyze in the image (UI elements, code structure, design patterns, etc.)",
+						},
+					},
+					"required": []string{"image_path"},
 				},
 			},
 		},

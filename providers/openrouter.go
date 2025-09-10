@@ -57,9 +57,54 @@ func (p *OpenRouterProvider) SendChatRequest(messages []types.Message, tools []t
 	// Convert messages to OpenRouter format
 	openRouterMessages := make([]map[string]interface{}, len(messages))
 	for i, msg := range messages {
-		openRouterMessages[i] = map[string]interface{}{
-			"role":    msg.Role,
-			"content": msg.Content,
+		// Start with text content
+		content := msg.Content
+		
+		// For messages with images, convert to OpenAI-compatible format
+		if len(msg.Images) > 0 {
+			// Create multimodal content array
+			contentArray := []map[string]interface{}{
+				{
+					"type": "text",
+					"text": content,
+				},
+			}
+			
+			// Add images
+			for _, img := range msg.Images {
+				imageContent := map[string]interface{}{
+					"type": "image_url",
+				}
+				
+				if img.URL != "" {
+					imageContent["image_url"] = map[string]interface{}{
+						"url": img.URL,
+					}
+				} else if img.Base64 != "" {
+					// Format as data URL
+					mimeType := img.Type
+					if mimeType == "" {
+						mimeType = "image/jpeg" // default
+					}
+					dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, img.Base64)
+					imageContent["image_url"] = map[string]interface{}{
+						"url": dataURL,
+					}
+				}
+				
+				contentArray = append(contentArray, imageContent)
+			}
+			
+			openRouterMessages[i] = map[string]interface{}{
+				"role":    msg.Role,
+				"content": contentArray,
+			}
+		} else {
+			// Regular text-only message
+			openRouterMessages[i] = map[string]interface{}{
+				"role":    msg.Role,
+				"content": content,
+			}
 		}
 	}
 
@@ -367,4 +412,38 @@ func (p *OpenRouterProvider) calculateBackoffDelay(resp *http.Response, attempt 
 		delay = 60 * time.Second
 	}
 	return delay
+}
+
+// SupportsVision checks if the current model supports vision
+func (p *OpenRouterProvider) SupportsVision() bool {
+	// Check if we have a vision model available
+	visionModel := p.GetVisionModel()
+	return visionModel != ""
+}
+
+// GetVisionModel returns the vision model for OpenRouter
+func (p *OpenRouterProvider) GetVisionModel() string {
+	return "openai/gpt-4o" // OpenRouter's default vision-capable model
+}
+
+// SendVisionRequest sends a vision-enabled chat request
+func (p *OpenRouterProvider) SendVisionRequest(messages []types.Message, tools []types.Tool, reasoning string) (*types.ChatResponse, error) {
+	// If the model doesn't support vision, fall back to regular chat
+	if !p.SupportsVision() {
+		return p.SendChatRequest(messages, tools, reasoning)
+	}
+	
+	// Temporarily switch to vision model for this request
+	originalModel := p.model
+	visionModel := p.GetVisionModel()
+	
+	p.model = visionModel
+	
+	// Send the vision request using regular chat logic (images are handled automatically)
+	response, err := p.SendChatRequest(messages, tools, reasoning)
+	
+	// Restore original model
+	p.model = originalModel
+	
+	return response, err
 }

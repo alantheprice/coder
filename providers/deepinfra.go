@@ -88,3 +88,15 @@ func (p *DeepInfraProvider) CreateClient() error {
 	// This method is no longer needed with the new unified provider pattern
 	return fmt.Errorf("CreateClient is deprecated - use the unified provider pattern instead")
 }
+
+// SupportsVision checks if DeepInfra supports vision
+func (p *DeepInfraProvider) SupportsVision() bool {
+	// Check if we have a vision model available
+	visionModel := p.GetVisionModel()
+	return visionModel != ""
+}
+
+// GetVisionModel returns the vision model for DeepInfra
+func (p *DeepInfraProvider) GetVisionModel() string {
+	return "meta-llama/Llama-3.2-11B-Vision-Instruct" // DeepInfra's vision-capable model
+}

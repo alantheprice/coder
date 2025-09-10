@@ -1,10 +1,18 @@
 package types
 
+// ImageData represents an image in a message
+type ImageData struct {
+	URL    string `json:"url,omitempty"`    // URL to image
+	Base64 string `json:"base64,omitempty"` // Base64 encoded image data
+	Type   string `json:"type,omitempty"`   // MIME type (image/jpeg, image/png, etc.)
+}
+
 // Message represents a chat message
 type Message struct {
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Role             string      `json:"role"`
+	Content          string      `json:"content"`
+	ReasoningContent string      `json:"reasoning_content,omitempty"`
+	Images           []ImageData `json:"images,omitempty"` // Support for multiple images
 }
 
 // ToolCall represents a tool call in the response
@@ -31,10 +39,11 @@ type Tool struct {
 type Choice struct {
 	Index   int `json:"index"`
 	Message struct {
-		Role             string     `json:"role"`
-		Content          string     `json:"content"`
-		ReasoningContent string     `json:"reasoning_content,omitempty"`
-		ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+		Role             string      `json:"role"`
+		Content          string      `json:"content"`
+		ReasoningContent string      `json:"reasoning_content,omitempty"`
+		Images           []ImageData `json:"images,omitempty"`
+		ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
 	} `json:"message"`
 	FinishReason string `json:"finish_reason"`
 }
@@ -83,4 +92,6 @@ type ProviderInterface interface {
 	GetProvider() string
 	GetModelContextLimit() (int, error)
 	ListModels() ([]ModelInfo, error)
+	SupportsVision() bool
+	SendVisionRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error)
 }

@@ -332,3 +332,15 @@ func (p *CerebrasProvider) calculateMaxTokens(messages []types.Message, tools []
 	
 	return maxOutput
 }
+
+// SupportsVision checks if the current model supports vision
+func (p *CerebrasProvider) SupportsVision() bool {
+	// Cerebras models are currently text-only
+	return false
+}
+
+// SendVisionRequest sends a vision-enabled chat request
+func (p *CerebrasProvider) SendVisionRequest(messages []types.Message, tools []types.Tool, reasoning string) (*types.ChatResponse, error) {
+	// Cerebras doesn't support vision, so just send regular chat request
+	return p.SendChatRequest(messages, tools, reasoning)
+}
