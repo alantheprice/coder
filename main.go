@@ -284,8 +284,8 @@ func processQuery(chatAgent *agent.Agent, query string, debug bool) {
 	fmt.Println(result)
 	fmt.Println("=====================================")
 
-	// Print conversation summary (always show)
-	chatAgent.PrintConversationSummary()
+	// Print concise summary after task completion
+	chatAgent.PrintConciseSummary()
 
 	// Save conversation state for continuity
 	if err := chatAgent.SaveState("default"); err != nil {
@@ -358,6 +358,7 @@ SLASH COMMANDS (Interactive Mode):
   /init                Generate or regenerate project context
   /commit              Interactive commit workflow - select files and generate commit messages
   /continuity          Show conversation continuity information
+  /info                Show detailed conversation summary and token usage
   /exit                Exit the interactive session
 
 INPUT FEATURES:

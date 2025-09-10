@@ -1,0 +1,279 @@
+package agent
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/alantheprice/coder/api"
+)
+
+// ProcessQuery handles the main conversation loop with the LLM
+func (a *Agent) ProcessQuery(userQuery string) (string, error) {
+	// Initialize with system prompt and user query
+	a.messages = []api.Message{
+		{Role: "system", Content: a.systemPrompt},
+		{Role: "user", Content: userQuery},
+	}
+
+	a.currentIteration = 0
+
+	for a.currentIteration < a.maxIterations {
+		a.currentIteration++
+
+		a.debugLog("Iteration %d/%d\n", a.currentIteration, a.maxIterations)
+
+		// Optimize conversation before sending to API
+		optimizedMessages := a.optimizer.OptimizeConversation(a.messages)
+		
+		if a.debug && len(optimizedMessages) < len(a.messages) {
+			saved := len(a.messages) - len(optimizedMessages)
+			a.debugLog("🔄 Conversation optimized: %d messages → %d messages (saved %d)\n", 
+				len(a.messages), len(optimizedMessages), saved)
+		}
+
+		// Check context size and manage if approaching limit
+		contextTokens := a.estimateContextTokens(optimizedMessages)
+		a.currentContextTokens = contextTokens
+		
+		// Check if we're approaching the context limit (80%)
+		contextThreshold := int(float64(a.maxContextTokens) * 0.8)
+		if contextTokens > contextThreshold {
+			if !a.contextWarningIssued {
+				a.debugLog("⚠️  Context approaching limit: %s/%s (%.1f%%)\n", 
+					a.formatTokenCount(contextTokens), 
+					a.formatTokenCount(a.maxContextTokens),
+					float64(contextTokens)/float64(a.maxContextTokens)*100)
+				a.contextWarningIssued = true
+			}
+			
+			// Perform aggressive optimization when near limit
+			optimizedMessages = a.optimizer.AggressiveOptimization(optimizedMessages)
+			contextTokens = a.estimateContextTokens(optimizedMessages)
+			a.currentContextTokens = contextTokens
+			
+			if a.debug {
+				a.debugLog("🔄 Aggressive optimization applied: %s context tokens\n", 
+					a.formatTokenCount(contextTokens))
+			}
+		}
+
+		// Send request to API using the unified interface
+		resp, err := a.client.SendChatRequest(optimizedMessages, api.GetToolDefinitions(), "high")
+		if err != nil {
+			return "", fmt.Errorf("API request failed: %w", err)
+		}
+
+		if len(resp.Choices) == 0 {
+			return "", fmt.Errorf("no response choices returned")
+		}
+
+		// Track token usage and cost
+		cachedTokens := resp.Usage.PromptTokensDetails.CachedTokens
+		
+		// Use actual cost from API (already accounts for cached tokens)
+		a.totalCost += resp.Usage.EstimatedCost
+		a.totalTokens += resp.Usage.TotalTokens
+		a.promptTokens += resp.Usage.PromptTokens
+		a.completionTokens += resp.Usage.CompletionTokens
+		a.cachedTokens += cachedTokens
+		
+		// Calculate cost savings for display purposes only
+		cachedCostSavings := a.calculateCachedCost(cachedTokens)
+		a.cachedCostSavings += cachedCostSavings
+		
+		// Only show context information in debug mode
+		if a.debug {
+			a.debugLog("💰 Response: %d prompt + %d completion | Cost: $%.6f | Context: %s/%s\n",
+				resp.Usage.PromptTokens,
+				resp.Usage.CompletionTokens,
+				resp.Usage.EstimatedCost,
+				a.formatTokenCount(a.currentContextTokens),
+				a.formatTokenCount(a.maxContextTokens))
+			
+			if cachedTokens > 0 {
+				a.debugLog("📋 Cached tokens: %d | Savings: $%.6f\n",
+					cachedTokens, cachedCostSavings)
+			}
+		}
+
+		choice := resp.Choices[0]
+
+		// Add assistant's message to history
+		a.messages = append(a.messages, api.Message{
+			Role:             "assistant",
+			Content:          choice.Message.Content,
+			ReasoningContent: choice.Message.ReasoningContent,
+		})
+
+		// Check if there are tool calls to execute
+		if len(choice.Message.ToolCalls) > 0 {
+			// Execute each tool call
+			toolResults := make([]string, 0)
+			for _, toolCall := range choice.Message.ToolCalls {
+				result, err := a.executeTool(toolCall)
+				if err != nil {
+					result = fmt.Sprintf("Error executing tool %s: %s", toolCall.Function.Name, err.Error())
+				}
+				toolResults = append(toolResults, fmt.Sprintf("Tool call result for %s: %s", toolCall.Function.Name, result))
+			}
+
+			// Add tool results to conversation
+			a.messages = append(a.messages, api.Message{
+				Role:    "user",
+				Content: strings.Join(toolResults, "\n\n"),
+			})
+
+			continue
+		} else {
+			// Check if content or reasoning_content contains tool calls that weren't properly parsed
+			toolCalls := a.extractToolCallsFromContent(choice.Message.Content)
+			if len(toolCalls) == 0 {
+				// Also check reasoning_content
+				toolCalls = a.extractToolCallsFromContent(choice.Message.ReasoningContent)
+			}
+
+			if len(toolCalls) > 0 {
+				a.debugLog("Found malformed tool calls in content, executing them\n")
+
+				toolResults := make([]string, 0)
+				for _, toolCall := range toolCalls {
+					result, err := a.executeTool(toolCall)
+					if err != nil {
+						result = fmt.Sprintf("Error executing tool %s: %s", toolCall.Function.Name, err.Error())
+					}
+					toolResults = append(toolResults, fmt.Sprintf("Tool call result for %s: %s", toolCall.Function.Name, result))
+				}
+
+				// Add tool results to conversation
+				a.messages = append(a.messages, api.Message{
+					Role:    "user",
+					Content: strings.Join(toolResults, "\n\n"),
+				})
+
+				continue
+			}
+
+			// Check if the response looks incomplete and retry
+			if a.isIncompleteResponse(choice.Message.Content) {
+				// Add encouragement to continue
+				a.messages = append(a.messages, api.Message{
+					Role: "user",
+					Content: "The previous response appears incomplete. Please continue with the task and use available tools to fully complete the work.",
+				})
+				continue
+			}
+
+			// No tool calls and response seems complete - we're done
+			return choice.Message.Content, nil
+		}
+	}
+
+	return "", fmt.Errorf("maximum iterations (%d) reached without completion", a.maxIterations)
+}
+
+// ProcessQueryWithContinuity processes a query with continuity from previous actions
+func (a *Agent) ProcessQueryWithContinuity(userQuery string) (string, error) {
+	// Load previous state if available
+	if a.previousSummary != "" {
+		continuityPrompt := fmt.Sprintf(`
+CONTINUITY FROM PREVIOUS SESSION:
+%s
+
+CURRENT TASK:
+%s
+
+Please continue working on this task chain, building upon the previous actions.`, 
+			a.previousSummary, userQuery)
+		
+		return a.ProcessQuery(continuityPrompt)
+	}
+	
+	// No previous state, process normally
+	return a.ProcessQuery(userQuery)
+}
+
+// isIncompleteResponse checks if a response looks incomplete or is declining the task prematurely
+func (a *Agent) isIncompleteResponse(content string) bool {
+	if content == "" {
+		return true // Empty responses are definitely incomplete
+	}
+	
+	content = strings.ToLower(content)
+	
+	// Common patterns that indicate the agent is giving up too early
+	declinePatterns := []string{
+		"i'm not able to",
+		"i cannot",
+		"i can't",
+		"not possible to",
+		"unable to",
+		"can only work with",
+		"cannot modify",
+		"cannot add",
+		"cannot create",
+	}
+	
+	// If it's a short response with decline language, it's likely incomplete
+	if len(content) < 200 {
+		for _, pattern := range declinePatterns {
+			if strings.Contains(content, pattern) {
+				return true
+			}
+		}
+	}
+	
+	// If there's no evidence of tool usage or exploration, likely incomplete
+	toolEvidencePatterns := []string{
+		"ls",
+		"read",
+		"write",
+		"edit",
+		"shell",
+		"file",
+		"directory",
+		"explore",
+		"implement",
+		"create",
+	}
+	
+	hasToolEvidence := false
+	for _, pattern := range toolEvidencePatterns {
+		if strings.Contains(content, pattern) {
+			hasToolEvidence = true
+			break
+		}
+	}
+	
+	// Short response without tool evidence suggests giving up early
+	if len(content) < 300 && !hasToolEvidence {
+		return true
+	}
+	
+	return false
+}
+
+// ClearConversationHistory resets the conversation state
+func (a *Agent) ClearConversationHistory() {
+	a.messages = []api.Message{}
+	a.previousSummary = ""
+	a.taskActions = []TaskAction{}
+	a.optimizer.Reset()
+}
+
+// SetConversationOptimization enables or disables conversation optimization
+// Note: Optimization is always enabled by default for optimal performance
+func (a *Agent) SetConversationOptimization(enabled bool) {
+	a.optimizer.SetEnabled(enabled)
+	if a.debug {
+		if enabled {
+			a.debugLog("🔄 Conversation optimization enabled\n")
+		} else {
+			a.debugLog("🔄 Conversation optimization disabled\n")
+		}
+	}
+}
+
+// GetOptimizationStats returns optimization statistics
+func (a *Agent) GetOptimizationStats() map[string]interface{} {
+	return a.optimizer.GetOptimizationStats()
+}

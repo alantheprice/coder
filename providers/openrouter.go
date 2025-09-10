@@ -219,10 +219,14 @@ func (p *OpenRouterProvider) ListModels() ([]types.ModelInfo, error) {
 		// Parse pricing if available
 		if model.Pricing != nil {
 			if promptCost, err := strconv.ParseFloat(model.Pricing.Prompt, 64); err == nil {
-				modelInfo.InputCost = promptCost
+				// OpenRouter pricing is per token, not per million tokens
+				// Convert to per million tokens for consistency with other providers
+				modelInfo.InputCost = promptCost * 1000000
 			}
 			if completionCost, err := strconv.ParseFloat(model.Pricing.Completion, 64); err == nil {
-				modelInfo.OutputCost = completionCost
+				// OpenRouter pricing is per token, not per million tokens
+				// Convert to per million tokens for consistency with other providers
+				modelInfo.OutputCost = completionCost * 1000000
 			}
 			if modelInfo.InputCost > 0 || modelInfo.OutputCost > 0 {
 				modelInfo.Cost = (modelInfo.InputCost + modelInfo.OutputCost) / 2.0
