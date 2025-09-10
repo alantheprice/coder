@@ -95,7 +95,19 @@ func (m *ModelsCommand) listModels() error {
 			fmt.Printf("   Context: %d tokens\n", model.ContextLength)
 		}
 		if len(model.Tags) > 0 {
-			fmt.Printf("   Tags: %s\n", strings.Join(model.Tags, ", "))
+			// Highlight tool support
+			hasTools := false
+			for _, tag := range model.Tags {
+				if tag == "tools" || tag == "tool_choice" {
+					hasTools = true
+					break
+				}
+			}
+			if hasTools {
+				fmt.Printf("   🛠️  Supports tools: %s\n", strings.Join(model.Tags, ", "))
+			} else {
+				fmt.Printf("   Features: %s\n", strings.Join(model.Tags, ", "))
+			}
 		}
 		fmt.Println()
 	}
@@ -135,13 +147,13 @@ func (m *ModelsCommand) listModels() error {
 // findFeaturedModels identifies indices of featured models
 func (m *ModelsCommand) findFeaturedModels(models []api.ModelInfo) []int {
 	featuredPatterns := []string{
-		"openai/gpt-oss",
-		"deepseek-ai/deepseek-v3.1",
-		"qwen/qwen3-coder",
-		"qwen/qwen3-235b",
-		"mistralai/devstral",
-		"moonshotai/kimi-k2",
-		"google/gemini-2.5-pro",
+		"deepseek/deepseek-chat-v3.1:free", // Free and reliable
+		"qwen/qwen3-30b-a3b-thinking-2507", // Very cheap and good
+		"bytedance/seed-oss-36b-instruct",  // Open source and cheap
+		"qwen/qwen3-max",                   // Good performance
+		"moonshotai/kimi-k2",               // Good for coding
+		"deepcogito/cogito-v2-preview",     // Reasoning model
+		"nvidia/nemotron-nano-9b-v2",       // Free NVIDIA model
 	}
 	
 	var featured []int
@@ -261,6 +273,15 @@ func (m *ModelsCommand) setModel(modelID string, chatAgent *agent.Agent) error {
 
 	if selectedModel == nil {
 		return fmt.Errorf("model '%s' not found. Use '/models' to see available models", modelID)
+	}
+
+	// For OpenRouter models, validate availability first
+	if selectedModel.Provider == "OpenRouter" {
+		fmt.Printf("🔍 Validating model availability...\n")
+		if err := api.ValidateOpenRouterModel(modelID); err != nil {
+			return fmt.Errorf("model validation failed: %w\n\n💡 Tip: Look for models marked with ✅ verified-working in the list", err)
+		}
+		fmt.Printf("✅ Model validated successfully!\n")
 	}
 
 	// Update the agent's model

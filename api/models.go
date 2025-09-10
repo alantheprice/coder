@@ -1,11 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -269,14 +272,18 @@ func getOpenRouterModels() ([]ModelInfo, error) {
 	
 	var response struct {
 		Data []struct {
-			ID          string `json:"id"`
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Pricing     *struct {
-				Prompt  float64 `json:"prompt"`
-				Completion float64 `json:"completion"`
+			ID            string `json:"id"`
+			CanonicalSlug string `json:"canonical_slug"`
+			Name          string `json:"name"`
+			Description   string `json:"description"`
+			Pricing       *struct {
+				Prompt     string `json:"prompt"`
+				Completion string `json:"completion"`
+				Request    string `json:"request"`
+				Image      string `json:"image"`
 			} `json:"pricing"`
-			ContextLength int `json:"context_length"`
+			ContextLength     int `json:"context_length"`
+			SupportedParams   []string `json:"supported_parameters"`
 		} `json:"data"`
 	}
 	
@@ -292,18 +299,144 @@ func getOpenRouterModels() ([]ModelInfo, error) {
 			Description:   model.Description,
 			Provider:      "OpenRouter",
 			ContextLength: model.ContextLength,
+			Tags:          model.SupportedParams, // Show supported parameters as tags
 		}
 		
 		if model.Pricing != nil {
-			modelInfo.InputCost = model.Pricing.Prompt
-			modelInfo.OutputCost = model.Pricing.Completion
-			modelInfo.Cost = (model.Pricing.Prompt + model.Pricing.Completion) / 2.0
+			if promptCost, err := strconv.ParseFloat(model.Pricing.Prompt, 64); err == nil {
+				modelInfo.InputCost = promptCost
+			}
+			if completionCost, err := strconv.ParseFloat(model.Pricing.Completion, 64); err == nil {
+				modelInfo.OutputCost = completionCost
+			}
+			// Only calculate average if both costs are available and non-zero
+			if modelInfo.InputCost > 0 || modelInfo.OutputCost > 0 {
+				modelInfo.Cost = (modelInfo.InputCost + modelInfo.OutputCost) / 2.0
+			}
 		}
 		
 		models[i] = modelInfo
 	}
 	
-	return models, nil
+	// Add availability hints to models based on known working ones
+	return addAvailabilityHints(models), nil
+}
+
+// addAvailabilityHints adds availability information based on known working models
+func addAvailabilityHints(models []ModelInfo) []ModelInfo {
+	// Known working models based on our testing
+	knownWorking := map[string]bool{
+		"deepseek/deepseek-chat-v3.1:free":    true,
+		"deepseek/deepseek-chat-v3.1":         true,
+		"qwen/qwen3-30b-a3b-thinking-2507":    true,
+		"bytedance/seed-oss-36b-instruct":     true,
+		"moonshotai/kimi-k2-0905":             true,
+		// Add more as we discover them
+	}
+
+	for i, model := range models {
+		if knownWorking[model.ID] {
+			// Mark as verified working
+			if len(model.Tags) == 0 {
+				model.Tags = []string{"✅ verified-working"}
+			} else {
+				model.Tags = append([]string{"✅ verified-working"}, model.Tags...)
+			}
+			models[i] = model
+		}
+	}
+
+	return models
+}
+
+// isModelAvailable tests if a model is actually usable via OpenRouter API
+func isModelAvailable(client *http.Client, apiKey, modelID string) bool {
+	requestBody := map[string]interface{}{
+		"model": modelID,
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": "test"},
+		},
+		"max_tokens": 1,
+	}
+
+	reqBody, _ := json.Marshal(requestBody)
+	
+	req, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return false
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("HTTP-Referer", "https://github.com/alantheprice/coder")
+	req.Header.Set("X-Title", "Coder AI Assistant")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	// Model is available if we don't get a 404
+	if resp.StatusCode == 404 {
+		body, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(body), "No allowed providers") {
+			return false
+		}
+	}
+
+	return resp.StatusCode != 404
+}
+
+// ValidateOpenRouterModel tests if a specific OpenRouter model is available
+func ValidateOpenRouterModel(modelID string) error {
+	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	if apiKey == "" {
+		return fmt.Errorf("OPENROUTER_API_KEY not set")
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	
+	requestBody := map[string]interface{}{
+		"model": modelID,
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": "test"},
+		},
+		"max_tokens": 1,
+	}
+
+	reqBody, _ := json.Marshal(requestBody)
+	
+	req, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("HTTP-Referer", "https://github.com/alantheprice/coder")
+	req.Header.Set("X-Title", "Coder AI Assistant")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		body, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(body), "No allowed providers") {
+			return fmt.Errorf("model %s is not available - no providers found", modelID)
+		}
+		return fmt.Errorf("model %s not found", modelID)
+	}
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
 }
 
 // getGroqModels gets available models from Groq API

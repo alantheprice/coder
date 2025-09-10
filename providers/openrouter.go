@@ -90,7 +90,10 @@ func (p *OpenRouterProvider) SendChatRequest(messages []types.Message, tools []t
 	httpReq.Header.Set("HTTP-Referer", "https://github.com/alantheprice/coder") // Required by OpenRouter
 	httpReq.Header.Set("X-Title", "Coder AI Assistant")                         // Required by OpenRouter
 
-	// Log the request for debugging
+	// Log the model for debugging if debug is enabled
+	if p.debug {
+		fmt.Printf("🔍 Using OpenRouter model: %s\n", p.model)
+	}
 	if p.debug {
 		fmt.Printf("🔍 OpenRouter Request URL: %s\n", "https://openrouter.ai/api/v1/chat/completions")
 		fmt.Printf("🔍 OpenRouter Request Body: %s\n", string(reqBody))
