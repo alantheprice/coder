@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alantheprice/coder/api"
+	"github.com/alantheprice/coder/config"
 	"github.com/alantheprice/coder/tools"
 )
 
@@ -27,23 +28,27 @@ type AgentState struct {
 }
 
 type Agent struct {
-	client           api.ClientInterface
-	messages         []api.Message
-	systemPrompt     string
-	maxIterations    int
-	currentIteration int
-	totalCost        float64
-	clientType       api.ClientType
-	taskActions      []TaskAction // Track what was accomplished
-	debug            bool         // Enable debug logging
-	totalTokens      int          // Track total tokens used across all requests
-	promptTokens     int          // Track total prompt tokens
-	completionTokens int          // Track total completion tokens
-	cachedTokens     int          // Track tokens that were cached/reused
-	cachedCostSavings float64      // Track cost savings from cached tokens
-	previousSummary   string       // Summary of previous actions for continuity
-	sessionID        string       // Unique session identifier
-	optimizer        *ConversationOptimizer // Conversation optimization
+	client                api.ClientInterface
+	messages              []api.Message
+	systemPrompt          string
+	maxIterations         int
+	currentIteration      int
+	totalCost             float64
+	clientType            api.ClientType
+	taskActions           []TaskAction // Track what was accomplished
+	debug                 bool         // Enable debug logging
+	totalTokens           int          // Track total tokens used across all requests
+	promptTokens          int          // Track total prompt tokens
+	completionTokens      int          // Track total completion tokens
+	cachedTokens          int          // Track tokens that were cached/reused
+	cachedCostSavings     float64      // Track cost savings from cached tokens
+	previousSummary       string       // Summary of previous actions for continuity
+	sessionID             string       // Unique session identifier
+	optimizer             *ConversationOptimizer // Conversation optimization
+	configManager         *config.Manager        // Configuration management
+	currentContextTokens  int          // Current context size being sent to model
+	maxContextTokens      int          // Model's maximum context window
+	contextWarningIssued  bool         // Whether we've warned about approaching context limit
 }
 
 // debugLog logs a message only if debug mode is enabled
@@ -53,18 +58,34 @@ func (a *Agent) debugLog(format string, args ...interface{}) {
 	}
 }
 
+// getModelContextLimit returns the maximum context window for a model from the API
+func (a *Agent) getModelContextLimit() int {
+	limit, err := a.client.GetModelContextLimit()
+	if err != nil {
+		// Fallback to conservative default if API method fails
+		if a.debug {
+			a.debugLog("⚠️  Failed to get model context limit: %v, using default\n", err)
+		}
+		return 32000
+	}
+	return limit
+}
+
 // ToolLog logs tool execution messages that are always visible with blue formatting
 func (a *Agent) ToolLog(action, target string) {
 	const blue = "\033[34m"
 	const reset = "\033[0m"
 	
-	// Format: [4:(45,000T)] read file filename.go
-	iterationInfo := fmt.Sprintf("[%d:(%sT)]", a.currentIteration, a.formatTokenCount(a.totalTokens))
+	// Format: [4:(15.2K/120K)] read file filename.go
+	contextInfo := fmt.Sprintf("[%d:(%s/%s)]", 
+		a.currentIteration, 
+		a.formatTokenCount(a.currentContextTokens), 
+		a.formatTokenCount(a.maxContextTokens))
 	
 	if target != "" {
-		fmt.Printf("%s%s %s%s %s\n", blue, iterationInfo, action, reset, target)
+		fmt.Printf("%s%s %s%s %s\n", blue, contextInfo, action, reset, target)
 	} else {
-		fmt.Printf("%s%s %s%s\n", blue, iterationInfo, action, reset)
+		fmt.Printf("%s%s %s%s\n", blue, contextInfo, action, reset)
 	}
 }
 
@@ -127,20 +148,41 @@ func NewAgent() (*Agent, error) {
 }
 
 func NewAgentWithModel(model string) (*Agent, error) {
-	// Determine which client to use with fallback
-	clientType, err := api.GetClientTypeWithFallback()
+	// Initialize configuration manager
+	configManager, err := config.NewManager()
 	if err != nil {
-		return nil, fmt.Errorf("no available providers: %w", err)
+		return nil, fmt.Errorf("failed to initialize configuration: %w", err)
 	}
 
-	var client api.ClientInterface
+	// Determine best provider and model
+	var clientType api.ClientType
+	var finalModel string
+	
 	if model != "" {
-		client, err = api.NewUnifiedClientWithModel(clientType, model)
+		// User specified a model, use current best provider
+		clientType, _, err = configManager.GetBestProvider()
+		if err != nil {
+			return nil, fmt.Errorf("no available providers: %w", err)
+		}
+		finalModel = model
 	} else {
-		client, err = api.NewUnifiedClient(clientType)
+		// Use configured provider and model
+		clientType, finalModel, err = configManager.GetBestProvider()
+		if err != nil {
+			return nil, fmt.Errorf("no available providers: %w", err)
+		}
 	}
+
+	// Create the client
+	client, err := api.NewUnifiedClientWithModel(clientType, finalModel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API client: %w", err)
+	}
+
+	// Save the selection for future use
+	if err := configManager.SetProviderAndModel(clientType, finalModel); err != nil {
+		// Log warning but don't fail - this is not critical
+		fmt.Printf("⚠️  Warning: Failed to save provider selection: %v\n", err)
 	}
 
 	// Check if debug mode is enabled
@@ -163,7 +205,7 @@ func NewAgentWithModel(model string) (*Agent, error) {
 	// Conversation optimization is always enabled
 	optimizationEnabled := true
 
-	return &Agent{
+	agent := &Agent{
 		client:        client,
 		messages:      []api.Message{},
 		systemPrompt:  systemPrompt,
@@ -172,7 +214,15 @@ func NewAgentWithModel(model string) (*Agent, error) {
 		clientType:    clientType,
 		debug:         debug,
 		optimizer:     NewConversationOptimizer(optimizationEnabled, debug),
-	}, nil
+		configManager: configManager,
+	}
+	
+	// Initialize context limits based on model
+	agent.maxContextTokens = agent.getModelContextLimit()
+	agent.currentContextTokens = 0
+	agent.contextWarningIssued = false
+	
+	return agent, nil
 }
 
 
@@ -221,6 +271,32 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 				len(a.messages), len(optimizedMessages), saved)
 		}
 
+		// Check context size and manage if approaching limit
+		contextTokens := a.estimateContextTokens(optimizedMessages)
+		a.currentContextTokens = contextTokens
+		
+		// Check if we're approaching the context limit (80%)
+		contextThreshold := int(float64(a.maxContextTokens) * 0.8)
+		if contextTokens > contextThreshold {
+			if !a.contextWarningIssued {
+				a.debugLog("⚠️  Context approaching limit: %s/%s (%.1f%%)\n", 
+					a.formatTokenCount(contextTokens), 
+					a.formatTokenCount(a.maxContextTokens),
+					float64(contextTokens)/float64(a.maxContextTokens)*100)
+				a.contextWarningIssued = true
+			}
+			
+			// Perform aggressive optimization when near limit
+			optimizedMessages = a.optimizer.AggressiveOptimization(optimizedMessages)
+			contextTokens = a.estimateContextTokens(optimizedMessages)
+			a.currentContextTokens = contextTokens
+			
+			if a.debug {
+				a.debugLog("🔄 Aggressive optimization applied: %s context tokens\n", 
+					a.formatTokenCount(contextTokens))
+			}
+		}
+
 		// Send request to API using the unified interface
 		resp, err := a.client.SendChatRequest(optimizedMessages, api.GetToolDefinitions(), "high")
 		if err != nil {
@@ -245,16 +321,19 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 		cachedCostSavings := a.calculateCachedCost(cachedTokens)
 		a.cachedCostSavings += cachedCostSavings
 		
-		a.debugLog("💰 Tokens: %d prompt + %d completion = %d total | Cost: $%.6f (Total: $%.6f)\n",
-			resp.Usage.PromptTokens,
-			resp.Usage.CompletionTokens,
-			resp.Usage.TotalTokens,
-			resp.Usage.EstimatedCost,
-			a.totalCost)
-		
-		if cachedTokens > 0 {
-			a.debugLog("📋 Cached tokens: %d | Cost savings: $%.6f (Total savings: $%.6f)\n",
-				cachedTokens, cachedCostSavings, a.cachedCostSavings)
+		// Only show context information in debug mode
+		if a.debug {
+			a.debugLog("💰 Response: %d prompt + %d completion | Cost: $%.6f | Context: %s/%s\n",
+				resp.Usage.PromptTokens,
+				resp.Usage.CompletionTokens,
+				resp.Usage.EstimatedCost,
+				a.formatTokenCount(a.currentContextTokens),
+				a.formatTokenCount(a.maxContextTokens))
+			
+			if cachedTokens > 0 {
+				a.debugLog("📋 Cached tokens: %d | Savings: $%.6f\n",
+					cachedTokens, cachedCostSavings)
+			}
 		}
 
 		choice := resp.Choices[0]
@@ -734,6 +813,13 @@ func (a *Agent) PrintConversationSummary() {
 	fmt.Printf("📝 Actual processed:   %s (%d prompt + %d completion)\n", 
 		a.formatTokenCount(actualProcessedTokens), a.promptTokens, a.completionTokens)
 	
+	// Context window information
+	contextUsage := float64(a.currentContextTokens) / float64(a.maxContextTokens) * 100
+	fmt.Printf("🪟 Context window:     %s/%s (%.1f%% used)\n", 
+		a.formatTokenCount(a.currentContextTokens), 
+		a.formatTokenCount(a.maxContextTokens), 
+		contextUsage)
+	
 	if a.cachedTokens > 0 {
 		efficiency := float64(a.cachedTokens)/float64(a.totalTokens)*100
 		fmt.Printf("♻️  Cached reused:     %s\n", a.formatTokenCount(a.cachedTokens))
@@ -808,15 +894,40 @@ func (a *Agent) GetMaxIterations() int {
 	return a.maxIterations
 }
 
-// SetModel updates the model being used by the agent
-func (a *Agent) SetModel(model string) error {
-	return a.client.SetModel(model)
-}
-
 // GetModel gets the current model being used by the agent
 func (a *Agent) GetModel() string {
 	// Use the interface method to get the model
 	return a.client.GetModel()
+}
+
+// SetModel changes the current model and persists the choice
+func (a *Agent) SetModel(model string) error {
+	// Update the client model
+	if err := a.client.SetModel(model); err != nil {
+		return fmt.Errorf("failed to set model on client: %w", err)
+	}
+	
+	// Save to configuration
+	if err := a.configManager.SetProviderAndModel(a.clientType, model); err != nil {
+		return fmt.Errorf("failed to save model selection: %w", err)
+	}
+	
+	return nil
+}
+
+// GetProvider returns the current provider name
+func (a *Agent) GetProvider() string {
+	return a.client.GetProvider()
+}
+
+// GetProviderType returns the current provider type
+func (a *Agent) GetProviderType() api.ClientType {
+	return a.clientType
+}
+
+// GetConfigManager returns the configuration manager
+func (a *Agent) GetConfigManager() *config.Manager {
+	return a.configManager
 }
 
 // extractToolCallsFromContent attempts to parse tool calls from the assistant's content or reasoning_content
@@ -1000,6 +1111,17 @@ func (a *Agent) suggestCorrectToolName(invalidName string) string {
 	}
 	
 	return ""
+}
+
+// estimateContextTokens estimates the token count for messages
+func (a *Agent) estimateContextTokens(messages []api.Message) int {
+	totalChars := 0
+	for _, msg := range messages {
+		totalChars += len(msg.Content)
+		totalChars += len(msg.ReasoningContent)
+	}
+	// Rough estimate: 4 chars per token (conservative)
+	return totalChars / 4
 }
 
 // formatTokenCount formats token count with thousands separators

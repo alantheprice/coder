@@ -357,3 +357,82 @@ func (co *ConversationOptimizer) SetEnabled(enabled bool) {
 func (co *ConversationOptimizer) IsEnabled() bool {
 	return co.enabled
 }
+
+// AggressiveOptimization performs more aggressive optimization when approaching context limits
+func (co *ConversationOptimizer) AggressiveOptimization(messages []api.Message) []api.Message {
+	if !co.enabled {
+		return messages
+	}
+
+	optimized := make([]api.Message, 0, len(messages))
+	
+	// Always keep system message and recent messages (last 5)
+	systemMsg := messages[0]
+	optimized = append(optimized, systemMsg)
+	
+	// Keep the original user query (usually index 1)
+	if len(messages) > 1 {
+		optimized = append(optimized, messages[1])
+	}
+	
+	// For middle messages, apply aggressive summarization
+	recentThreshold := len(messages) - 5
+	if recentThreshold < 2 {
+		recentThreshold = 2
+	}
+	
+	for i := 2; i < recentThreshold; i++ {
+		msg := messages[i]
+		
+		// Summarize tool results more aggressively
+		if msg.Role == "user" && strings.Contains(msg.Content, "Tool call result") {
+			summary := co.createAggressiveSummary(msg)
+			optimized = append(optimized, api.Message{
+				Role:    msg.Role,
+				Content: summary,
+			})
+		} else {
+			// Keep non-tool messages but truncate if very long
+			content := msg.Content
+			if len(content) > 500 {
+				content = content[:500] + "... [TRUNCATED for context limit]"
+			}
+			optimized = append(optimized, api.Message{
+				Role:    msg.Role,
+				Content: content,
+			})
+		}
+	}
+	
+	// Always keep recent messages (last 5) completely intact
+	for i := recentThreshold; i < len(messages); i++ {
+		optimized = append(optimized, messages[i])
+	}
+	
+	return optimized
+}
+
+// createAggressiveSummary creates very compact summaries for tool results
+func (co *ConversationOptimizer) createAggressiveSummary(msg api.Message) string {
+	content := msg.Content
+	
+	if strings.Contains(content, "Tool call result for read_file:") {
+		filePath := co.extractFilePath(content)
+		return fmt.Sprintf("Tool call result for read_file: %s\n[COMPACT] File read (%d chars)", 
+			filePath, len(content))
+	}
+	
+	if strings.Contains(content, "Tool call result for shell_command:") {
+		command := co.extractShellCommand(content)
+		return fmt.Sprintf("Tool call result for shell_command: %s\n[COMPACT] Command executed (%d chars output)", 
+			command, len(content))
+	}
+	
+	// Generic tool result summary
+	lines := strings.Split(content, "\n")
+	if len(lines) > 0 {
+		return fmt.Sprintf("%s\n[COMPACT] Tool result (%d chars)", lines[0], len(content))
+	}
+	
+	return "[COMPACT] Tool result"
+}

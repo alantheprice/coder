@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -181,4 +182,16 @@ func (c *LocalOllamaClient) GetModel() string {
 
 func (c *LocalOllamaClient) GetProvider() string {
 	return "ollama"
+}
+
+func (c *LocalOllamaClient) GetModelContextLimit() (int, error) {
+	// For local Ollama models, we use the model name to determine context
+	model := c.model
+	
+	switch {
+	case strings.Contains(model, "gpt-oss"):
+		return 120000, nil // GPT-OSS models typically have ~120k context
+	default:
+		return 32000, nil  // Conservative default for other local models
+	}
 }

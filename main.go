@@ -10,6 +10,7 @@ import (
 	"github.com/alantheprice/coder/agent"
 	"github.com/alantheprice/coder/api"
 	"github.com/alantheprice/coder/commands"
+	"github.com/alantheprice/coder/config"
 	"github.com/alantheprice/coder/tools"
 	"github.com/chzyer/readline"
 )
@@ -26,6 +27,7 @@ func main() {
 	var prompt string
 	useLocal := false
 	model := ""
+	provider := ""
 	debug := os.Getenv("DEBUG") == "true" || os.Getenv("DEBUG") == "1"
 
 	args := os.Args[1:] // Skip program name
@@ -38,18 +40,22 @@ func main() {
 			return
 		case arg == "--local" || arg == "-l":
 			useLocal = true
-			// Force Ollama client by unsetting the API key temporarily
-			if os.Getenv("DEEPINFRA_API_KEY") != "" {
-				debugLog(debug, "📍 Using local inference (--local flag detected)\n")
-				os.Setenv("DEEPINFRA_API_KEY_BACKUP", os.Getenv("DEEPINFRA_API_KEY"))
-				os.Unsetenv("DEEPINFRA_API_KEY")
-			}
+			provider = "ollama" // Force Ollama when --local is used
 		case strings.HasPrefix(arg, "--model="):
 			model = strings.TrimPrefix(arg, "--model=")
+		case strings.HasPrefix(arg, "--provider="):
+			provider = strings.TrimPrefix(arg, "--provider=")
 		case !strings.HasPrefix(arg, "-"):
 			// This is a positional argument - join all remaining args as the prompt
 			prompt = strings.Join(args[i:], " ")
 			break
+		}
+	}
+
+	// Handle provider override if specified
+	if provider != "" {
+		if err := setProviderOverride(provider, useLocal); err != nil {
+			log.Fatalf("Failed to set provider: %v", err)
 		}
 	}
 
@@ -328,6 +334,7 @@ USAGE:
   Non-interactive:      ./coder "your query here"
   Local inference:      ./coder --local "your query"
   Custom model:         ./coder --model=meta-llama/Meta-Llama-3.1-70B-Instruct "your query"
+  Custom provider:      ./coder --provider=ollama "your query"
   Piped input:         echo "your query" | ./coder
   Help:                ./coder --help
 
@@ -336,6 +343,9 @@ SLASH COMMANDS (Interactive Mode):
   /models              List available models and select model to use
   /models select       Interactive model selection
   /models <model_id>   Set model directly
+  /provider            Show provider status and switch providers
+  /provider select     Interactive provider selection
+  /provider <name>     Switch to specific provider
   /init                Generate or regenerate project context
   /commit              Interactive commit workflow - select files and generate commit messages
   /continuity          Show conversation continuity information
@@ -393,4 +403,66 @@ The agent follows a systematic exploration process and will autonomously:
 Type 'help' during interactive mode for this help message.
 Type 'exit' or 'quit' to end the session.
 `)
+}
+
+// setProviderOverride temporarily overrides the provider for this session
+func setProviderOverride(providerName string, useLocal bool) error {
+	// Convert provider name to ClientType
+	provider, err := config.GetProviderFromConfigName(strings.ToLower(providerName))
+	if err != nil {
+		return fmt.Errorf("unknown provider '%s'. Available: deepinfra, ollama, cerebras, openrouter, groq, deepseek", providerName)
+	}
+	
+	// For local flag, force to Ollama and disable API keys temporarily
+	if useLocal || provider == api.OllamaClientType {
+		// Backup and unset API keys to force Ollama
+		if os.Getenv("DEEPINFRA_API_KEY") != "" {
+			os.Setenv("DEEPINFRA_API_KEY_BACKUP", os.Getenv("DEEPINFRA_API_KEY"))
+			os.Unsetenv("DEEPINFRA_API_KEY")
+		}
+		if os.Getenv("CEREBRAS_API_KEY") != "" {
+			os.Setenv("CEREBRAS_API_KEY_BACKUP", os.Getenv("CEREBRAS_API_KEY"))
+			os.Unsetenv("CEREBRAS_API_KEY")
+		}
+		if os.Getenv("OPENROUTER_API_KEY") != "" {
+			os.Setenv("OPENROUTER_API_KEY_BACKUP", os.Getenv("OPENROUTER_API_KEY"))
+			os.Unsetenv("OPENROUTER_API_KEY")
+		}
+		if os.Getenv("GROQ_API_KEY") != "" {
+			os.Setenv("GROQ_API_KEY_BACKUP", os.Getenv("GROQ_API_KEY"))
+			os.Unsetenv("GROQ_API_KEY")
+		}
+		if os.Getenv("DEEPSEEK_API_KEY") != "" {
+			os.Setenv("DEEPSEEK_API_KEY_BACKUP", os.Getenv("DEEPSEEK_API_KEY"))
+			os.Unsetenv("DEEPSEEK_API_KEY")
+		}
+		fmt.Printf("📍 Using local inference (Ollama)\n")
+		return nil
+	}
+	
+	// For other providers, temporarily unset other API keys to force selection
+	switch provider {
+	case api.DeepInfraClientType:
+		// Keep DEEPINFRA_API_KEY, unset others
+		if os.Getenv("CEREBRAS_API_KEY") != "" {
+			os.Setenv("CEREBRAS_API_KEY_BACKUP", os.Getenv("CEREBRAS_API_KEY"))
+			os.Unsetenv("CEREBRAS_API_KEY")
+		}
+		if os.Getenv("OPENROUTER_API_KEY") != "" {
+			os.Setenv("OPENROUTER_API_KEY_BACKUP", os.Getenv("OPENROUTER_API_KEY"))
+			os.Unsetenv("OPENROUTER_API_KEY")
+		}
+		if os.Getenv("GROQ_API_KEY") != "" {
+			os.Setenv("GROQ_API_KEY_BACKUP", os.Getenv("GROQ_API_KEY"))
+			os.Unsetenv("GROQ_API_KEY")
+		}
+		if os.Getenv("DEEPSEEK_API_KEY") != "" {
+			os.Setenv("DEEPSEEK_API_KEY_BACKUP", os.Getenv("DEEPSEEK_API_KEY"))
+			os.Unsetenv("DEEPSEEK_API_KEY")
+		}
+	// Add similar cases for other providers as needed
+	}
+	
+	fmt.Printf("📍 Using provider: %s\n", api.GetProviderName(provider))
+	return nil
 }

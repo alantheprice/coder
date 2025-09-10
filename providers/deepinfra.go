@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/alantheprice/coder/api"
 )
 
 // DeepInfraProvider implements the OpenAI-compatible DeepInfra API
@@ -85,8 +83,8 @@ func (p *DeepInfraProvider) GetProviderName() string {
 }
 
 // CreateClient creates an API client for this provider
-func (p *DeepInfraProvider) CreateClient() (api.ClientInterface, error) {
-	// For now, we'll use the existing DeepInfra client wrapper
-	// This will be updated to use the new provider system
-	return api.NewUnifiedClientWithModel(api.DeepInfraClientType, p.model)
+// This method is deprecated and will be removed
+func (p *DeepInfraProvider) CreateClient() error {
+	// This method is no longer needed with the new unified provider pattern
+	return fmt.Errorf("CreateClient is deprecated - use the unified provider pattern instead")
 }

@@ -14,6 +14,7 @@ type ClientInterface interface {
 	SetModel(model string) error
 	GetModel() string
 	GetProvider() string
+	GetModelContextLimit() (int, error)
 }
 
 // ClientType represents the type of client to use
@@ -76,8 +77,7 @@ func NewCerebrasClientWrapper(model string) (ClientInterface, error) {
 
 // NewOpenRouterClientWrapper creates an OpenRouter client wrapper
 func NewOpenRouterClientWrapper(model string) (ClientInterface, error) {
-	// For now, return an error since OpenRouter provider is not fully implemented
-	return nil, fmt.Errorf("OpenRouter provider not yet implemented")
+	return NewOpenRouterProvider(model)
 }
 
 // NewGroqClientWrapper creates a Groq client wrapper
@@ -94,14 +94,14 @@ func NewDeepSeekClientWrapper(model string) (ClientInterface, error) {
 
 // GetClientTypeFromEnv determines which client to use based on environment variables
 func GetClientTypeFromEnv() ClientType {
-	// Check provider environment variables in priority order
+	// Check provider environment variables in priority order (OpenRouter first as preferred)
 	envProviders := []struct {
 		envVar string
 		client ClientType
 	}{
+		{"OPENROUTER_API_KEY", OpenRouterClientType},
 		{"DEEPINFRA_API_KEY", DeepInfraClientType},
 		{"CEREBRAS_API_KEY", CerebrasClientType},
-		{"OPENROUTER_API_KEY", OpenRouterClientType},
 		{"GROQ_API_KEY", GroqClientType},
 		{"DEEPSEEK_API_KEY", DeepSeekClientType},
 	}
@@ -119,20 +119,20 @@ func GetClientTypeFromEnv() ClientType {
 // GetDefaultModelForProvider returns the best default model for each provider
 func GetDefaultModelForProvider(clientType ClientType) string {
 	switch clientType {
+	case OpenRouterClientType:
+		return "deepseek/deepseek-chat-v3.1:free"
 	case DeepInfraClientType:
 		return "deepseek-ai/DeepSeek-V3.1"
 	case OllamaClientType:
 		return "gpt-oss:20b"
 	case CerebrasClientType:
 		return "cerebras/btlm-3b-8k-base"
-	case OpenRouterClientType:
-		return "anthropic/claude-3.5-sonnet"
 	case GroqClientType:
 		return "llama3-70b-8192"
 	case DeepSeekClientType:
 		return "deepseek-chat"
 	default:
-		return "deepseek-ai/DeepSeek-V3.1"
+		return "deepseek/deepseek-chat" // Default to OpenRouter
 	}
 }
 
@@ -156,14 +156,14 @@ func GetClientTypeWithFallback() (ClientType, error) {
 		return OllamaClientType, nil
 	}
 	
-	// Ollama not available, try other providers as fallback
+	// Ollama not available, try other providers as fallback (OpenRouter first as preferred)
 	envProviders := []struct {
 		envVar string
 		client ClientType
 	}{
+		{"OPENROUTER_API_KEY", OpenRouterClientType},
 		{"DEEPINFRA_API_KEY", DeepInfraClientType},
 		{"CEREBRAS_API_KEY", CerebrasClientType},
-		{"OPENROUTER_API_KEY", OpenRouterClientType},
 		{"GROQ_API_KEY", GroqClientType},
 		{"DEEPSEEK_API_KEY", DeepSeekClientType},
 	}
@@ -273,3 +273,35 @@ func (w *DeepInfraClientWrapper) GetModel() string {
 func (w *DeepInfraClientWrapper) GetProvider() string {
 	return "deepinfra"
 }
+
+func (w *DeepInfraClientWrapper) GetModelContextLimit() (int, error) {
+	model := w.client.model
+	
+	// Model-specific context limits based on official documentation
+	switch {
+	case strings.Contains(model, "DeepSeek-V3.1"):
+		return 128000, nil // DeepSeek-V3.1 supports 128K context
+	case strings.Contains(model, "DeepSeek-V3"):
+		return 128000, nil // DeepSeek-V3 supports 128K context
+	case strings.Contains(model, "DeepSeek-R1"):
+		return 64000, nil  // DeepSeek-R1 supports 64K context
+	case strings.Contains(model, "deepseek"):
+		return 32000, nil  // Other DeepSeek models typically 32K
+	case strings.Contains(model, "gpt-oss"):
+		return 120000, nil // GPT-OSS models typically have ~120k context
+	case strings.Contains(model, "llama"):
+		return 32000, nil  // Llama models typically have ~32k context
+	case strings.Contains(model, "qwen"):
+		if strings.Contains(model, "Qwen3-Coder-480B") {
+			return 128000, nil // Large Qwen models have bigger context
+		}
+		return 32000, nil  // Standard Qwen models typically have ~32k context
+	case strings.Contains(model, "claude"):
+		return 200000, nil // Claude models have large context windows
+	case strings.Contains(model, "gemini"):
+		return 128000, nil // Gemini models have large context windows
+	default:
+		return 32000, nil  // Conservative default
+	}
+}
+

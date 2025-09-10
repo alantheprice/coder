@@ -1,12 +1,9 @@
 package providers
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/alantheprice/coder/api"
 )
 
 // Provider represents an OpenAI-compatible API provider
@@ -26,8 +23,9 @@ type Provider interface {
 	// IsAvailable checks if the provider is available (API key set)
 	IsAvailable() bool
 	
-	// CreateClient creates a new API client for this provider
-	CreateClient(model string) (api.ClientInterface, error)
+	// CreateClient creates a new API client for this provider  
+	// This method is deprecated in favor of the unified provider pattern
+	CreateClient(model string) error
 }
 
 // BaseProvider provides common functionality for all providers
