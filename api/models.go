@@ -78,7 +78,17 @@ func GetModelsForProvider(clientType ClientType) ([]ModelInfo, error) {
 }
 
 // getDeepInfraModels gets available models from DeepInfra API
+var (
+	deepInfraModelsCache     []ModelInfo
+	deepInfraModelsInitialized bool
+)
+
 func getDeepInfraModels() ([]ModelInfo, error) {
+	if deepInfraModelsInitialized {
+		return deepInfraModelsCache, nil
+	}
+
+	
 	apiKey := os.Getenv("DEEPINFRA_API_KEY")
 	if apiKey == "" {
 		return nil, fmt.Errorf("DEEPINFRA_API_KEY not set")
@@ -643,7 +653,7 @@ func createProviderForType(clientType ClientType) (types.ProviderInterface, erro
 		return providers.NewOpenRouterProvider()
 	// DeepInfra provider is incomplete, will use fallback
 	case DeepInfraClientType:
-		return nil, fmt.Errorf("DeepInfra provider incomplete, using fallback")
+		return nil, fmt.Errorf("DeepInfra provider is incomplete, using fallback")
 	// Add other providers as they implement ListModels
 	default:
 		return nil, fmt.Errorf("provider %s does not support ListModels yet", clientType)

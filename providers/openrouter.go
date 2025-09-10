@@ -17,10 +17,12 @@ import (
 
 // OpenRouterProvider implements the OpenAI-compatible OpenRouter API
 type OpenRouterProvider struct {
-	httpClient *http.Client
-	apiToken   string
-	debug      bool
-	model      string
+	httpClient   *http.Client
+	apiToken     string
+	debug        bool
+	model        string
+	models       []types.ModelInfo
+	modelsCached bool
 }
 
 // NewOpenRouterProvider creates a new OpenRouter provider instance
@@ -63,7 +65,7 @@ func (p *OpenRouterProvider) SendChatRequest(messages []types.Message, tools []t
 
 	// Calculate appropriate max_tokens based on context limits
 	maxTokens := p.calculateMaxTokens(messages, tools)
-	
+
 	// Build request payload
 	requestBody := map[string]interface{}{
 		"model":       p.model,
@@ -136,41 +138,27 @@ func (p *OpenRouterProvider) GetProvider() string {
 
 // GetModelContextLimit returns the context limit for the current model
 func (p *OpenRouterProvider) GetModelContextLimit() (int, error) {
-	model := p.model
-	
-	// Common OpenRouter model context limits
-	switch {
-	case strings.Contains(model, "deepseek-chat"):
-		return 64000, nil  // DeepSeek Chat supports 64K context
-	case strings.Contains(model, "deepseek"):
-		return 32000, nil  // Other DeepSeek models
-	case strings.Contains(model, "claude-3.5-sonnet"):
-		return 200000, nil
-	case strings.Contains(model, "claude-3-opus"):
-		return 200000, nil
-	case strings.Contains(model, "claude-3-sonnet"):
-		return 200000, nil
-	case strings.Contains(model, "claude-3-haiku"):
-		return 200000, nil
-	case strings.Contains(model, "gpt-4o"):
-		return 128000, nil
-	case strings.Contains(model, "gpt-4"):
-		return 32000, nil
-	case strings.Contains(model, "gemini-pro"):
-		return 128000, nil
-	case strings.Contains(model, "llama-3.1-405b"):
-		return 32000, nil
-	case strings.Contains(model, "llama-3.1-70b"):
-		return 32000, nil
-	case strings.Contains(model, "llama-3.1-8b"):
-		return 32000, nil
-	default:
-		return 32000, nil // Conservative default
+	if !p.modelsCached {
+		if _, err := p.ListModels(); err != nil {
+			return 32000, nil // fallback
+		}
 	}
+
+	for _, m := range p.models {
+		if m.ID == p.model {
+			return m.ContextLength, nil
+		}
+	}
+
+	return 128000, nil // default
 }
 
 // ListModels returns available models from OpenRouter API
 func (p *OpenRouterProvider) ListModels() ([]types.ModelInfo, error) {
+	if p.modelsCached {
+		return p.models, nil
+	}
+
 	httpReq, err := http.NewRequest("GET", "https://openrouter.ai/api/v1/models", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -220,14 +208,14 @@ func (p *OpenRouterProvider) ListModels() ([]types.ModelInfo, error) {
 			Name:     model.Name,
 			Provider: "openrouter",
 		}
-		
+
 		if model.Description != "" {
 			modelInfo.Description = model.Description
 		}
 		if model.ContextLength > 0 {
 			modelInfo.ContextLength = model.ContextLength
 		}
-		
+
 		// Parse pricing if available
 		if model.Pricing != nil {
 			if promptCost, err := strconv.ParseFloat(model.Pricing.Prompt, 64); err == nil {
@@ -240,7 +228,7 @@ func (p *OpenRouterProvider) ListModels() ([]types.ModelInfo, error) {
 				modelInfo.Cost = (modelInfo.InputCost + modelInfo.OutputCost) / 2.0
 			}
 		}
-		
+
 		models[i] = modelInfo
 	}
 
@@ -255,15 +243,15 @@ func (p *OpenRouterProvider) sendRequestWithRetry(httpReq *http.Request, reqBody
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// Clone the request body for retry attempts
 		httpReq.Body = io.NopCloser(bytes.NewBuffer(reqBody))
-		
+
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
 			return nil, fmt.Errorf("failed to send request: %w", err)
 		}
-		
+
 		respBody, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		
+
 		if readErr != nil {
 			return nil, fmt.Errorf("failed to read response body: %w", readErr)
 		}
@@ -294,12 +282,12 @@ func (p *OpenRouterProvider) sendRequestWithRetry(httpReq *http.Request, reqBody
 						if strings.Contains(strings.ToLower(message), "daily limit") {
 							return nil, fmt.Errorf("daily limit exceeded: %s", message)
 						}
-						
+
 						// For rate limits, implement backoff
 						if attempt < maxRetries {
 							// Check for rate limit headers to get reset time
 							waitTime := p.calculateBackoffDelay(resp, attempt, baseDelay)
-							fmt.Printf("⏳ Rate limit hit (attempt %d/%d), waiting %v before retry...\n", 
+							fmt.Printf("⏳ Rate limit hit (attempt %d/%d), waiting %v before retry...\n",
 								attempt+1, maxRetries+1, waitTime)
 							time.Sleep(waitTime)
 							continue
@@ -323,28 +311,28 @@ func (p *OpenRouterProvider) calculateMaxTokens(messages []types.Message, tools 
 	if err != nil || contextLimit == 0 {
 		contextLimit = 32000 // Conservative default
 	}
-	
+
 	// Rough estimation: 1 token ≈ 4 characters
 	inputTokens := 0
-	
+
 	// Estimate tokens from messages
 	for _, msg := range messages {
 		inputTokens += len(msg.Content) / 4
 	}
-	
+
 	// Estimate tokens from tools (tools descriptions can be large)
 	inputTokens += len(tools) * 200 // Rough estimate per tool
-	
+
 	// Reserve buffer for safety and leave room for response
 	maxOutput := contextLimit - inputTokens - 1000 // 1000 token safety buffer
-	
+
 	// Ensure reasonable bounds
 	if maxOutput > 16000 {
 		maxOutput = 16000 // Cap at 16K for most responses
 	} else if maxOutput < 1000 {
 		maxOutput = 1000 // Minimum useful response size
 	}
-	
+
 	return maxOutput
 }
 
@@ -356,7 +344,7 @@ func (p *OpenRouterProvider) calculateBackoffDelay(resp *http.Response, attempt 
 			// Convert from milliseconds to time
 			resetAt := time.Unix(resetTime/1000, (resetTime%1000)*1000000)
 			waitTime := time.Until(resetAt)
-			
+
 			// Add small buffer and cap at reasonable maximum
 			waitTime += 2 * time.Second
 			if waitTime > 60*time.Second {

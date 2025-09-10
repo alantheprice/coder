@@ -164,66 +164,74 @@ func (a *Agent) findChanges(oldLines, newLines []string) []DiffChange {
 	
 	oldLen := len(oldLines)
 	newLen := len(newLines)
+	maxLen := oldLen
+	if newLen > oldLen {
+		maxLen = newLen
+	}
 	
-	i, j := 0, 0
-	
-	for i < oldLen || j < newLen {
-		// Find the start of a difference
-		for i < oldLen && j < newLen && oldLines[i] == newLines[j] {
-			i++
-			j++
+	// Simple line-by-line comparison - much more reliable than complex algorithms
+	i := 0
+	for i < maxLen {
+		oldLine := ""
+		newLine := ""
+		
+		if i < oldLen {
+			oldLine = oldLines[i]
+		}
+		if i < newLen {
+			newLine = newLines[i]
 		}
 		
-		if i >= oldLen && j >= newLen {
-			break // No more differences
-		}
-		
-		// Found a difference, find the end of it
-		changeOldStart := i
-		changeNewStart := j
-		
-		// Simple approach: advance both pointers until we find matching content again
-		oldEnd := i
-		newEnd := j
-		
-		// Look ahead to find where lines start matching again
-		matchFound := false
-		for !matchFound && (oldEnd < oldLen || newEnd < newLen) {
-			// Try to find a sequence of matching lines
-			if oldEnd < oldLen && newEnd < newLen {
-				// Check if next few lines match
-				lookAhead := 2
-				matches := 0
-				for k := 0; k < lookAhead && oldEnd+k < oldLen && newEnd+k < newLen; k++ {
-					if oldLines[oldEnd+k] == newLines[newEnd+k] {
-						matches++
-					}
+		// If lines are different, record the change
+		if oldLine != newLine {
+			changeStart := i
+			changeLength := 1
+			
+			// Look ahead to group consecutive changes together
+			for i+1 < maxLen {
+				nextOld := ""
+				nextNew := ""
+				if i+1 < oldLen {
+					nextOld = oldLines[i+1]
 				}
-				if matches >= lookAhead || (matches > 0 && oldEnd+matches >= oldLen && newEnd+matches >= newLen) {
-					matchFound = true
+				if i+1 < newLen {
+					nextNew = newLines[i+1]
+				}
+				
+				if nextOld != nextNew {
+					changeLength++
+					i++
+				} else {
+					break
 				}
 			}
 			
-			if !matchFound {
-				if oldEnd < oldLen {
-					oldEnd++
-				}
-				if newEnd < newLen {
-					newEnd++
+			// Determine old and new lengths for this change
+			oldChangeLen := changeLength
+			newChangeLen := changeLength
+			
+			if changeStart+changeLength > oldLen {
+				oldChangeLen = oldLen - changeStart
+				if oldChangeLen < 0 {
+					oldChangeLen = 0
 				}
 			}
+			if changeStart+changeLength > newLen {
+				newChangeLen = newLen - changeStart
+				if newChangeLen < 0 {
+					newChangeLen = 0
+				}
+			}
+			
+			changes = append(changes, DiffChange{
+				OldStart:  changeStart,
+				OldLength: oldChangeLen,
+				NewStart:  changeStart,
+				NewLength: newChangeLen,
+			})
 		}
 		
-		// Record the change
-		changes = append(changes, DiffChange{
-			OldStart:  changeOldStart,
-			OldLength: oldEnd - changeOldStart,
-			NewStart:  changeNewStart,
-			NewLength: newEnd - changeNewStart,
-		})
-		
-		i = oldEnd
-		j = newEnd
+		i++
 	}
 	
 	return changes
