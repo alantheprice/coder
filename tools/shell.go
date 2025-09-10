@@ -19,7 +19,6 @@ func ExecuteShellCommand(command string) (string, error) {
 	if shell == "" {
 		shell = "/bin/sh"
 	}
-	fmt.Printf("Executing command: %s, with shell: %s\n", command, shell)
 	cmd := exec.Command(shell, "-c", command)
 
 	// Set up timeout
