@@ -102,6 +102,8 @@ func getFallbackSystemPrompt() string {
 - read_file: Read file contents (understand existing code)
 - write_file: Create files (new implementations)
 - edit_file: Modify files (changes to existing code)
+- analyze_ui_screenshot: Comprehensive UI/frontend analysis for React/Vue/Angular apps, websites, mockups (uses optimized prompts, no custom prompts supported)
+- analyze_image_content: General content extraction for text, code screenshots, diagrams (supports custom analysis prompts)
 - add_bulk_todos: Create multiple tasks at once (PREFERRED for multi-step work)
 - update_todo_status: Update task progress  
 - list_todos: View active tasks (compact format)
@@ -130,6 +132,18 @@ Use ONLY these exact patterns:
 
 **Test compilation:**
 {"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "shell_command", "arguments": "{\"command\": \"go build .\"}"}}]}
+
+**Analyze UI screenshots for frontend development:**
+{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "analyze_ui_screenshot", "arguments": "{\"image_path\": \"mockup.png\"}"}}]}
+
+**Analyze general image content:**
+{"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "analyze_image_content", "arguments": "{\"image_path\": \"document.jpg\", \"analysis_prompt\": \"Extract text content\"}"}}]}
+
+## IMAGE ANALYSIS TOOL SELECTION - CRITICAL:
+- **ALWAYS use analyze_ui_screenshot for ANY web/UI/app development task**
+- **NEVER make multiple image analysis calls for same UI task**
+- **React/Vue/Angular/web apps = MANDATORY analyze_ui_screenshot**
+- **Only use analyze_image_content for document text extraction or non-UI content**
 
 **Create multiple todos (REQUIRED for multi-step tasks):**
 {"tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "add_bulk_todos", "arguments": "{\"todos\": [{\"title\": \"Read main.go\", \"priority\": \"high\"}, {\"title\": \"Add new function\", \"priority\": \"medium\"}, {\"title\": \"Test changes\", \"priority\": \"high\"}]}"}}]}

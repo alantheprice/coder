@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 	a.debugLog("🔧 Executing tool: %s with args: %v\n", toolCall.Function.Name, args)
 	
 	// Validate tool name and provide helpful error for common mistakes
-	validTools := []string{"shell_command", "read_file", "write_file", "edit_file", "add_todo", "update_todo_status", "list_todos", "add_bulk_todos", "auto_complete_todos", "get_next_todo", "list_all_todos", "get_active_todos_compact", "archive_completed", "update_todo_status_bulk", "analyze_image"}
+	validTools := []string{"shell_command", "read_file", "write_file", "edit_file", "add_todo", "update_todo_status", "list_todos", "add_bulk_todos", "auto_complete_todos", "get_next_todo", "list_all_todos", "get_active_todos_compact", "archive_completed", "update_todo_status_bulk", "analyze_ui_screenshot", "analyze_image_content"}
 	isValidTool := false
 	for _, valid := range validTools {
 		if toolCall.Function.Name == valid {
@@ -332,7 +333,45 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 		result := tools.UpdateTodoStatusBulk(updates)
 		return result, nil
 
-	case "analyze_image":
+	case "analyze_ui_screenshot":
+		imagePath, ok := args["image_path"].(string)
+		if !ok {
+			return "", fmt.Errorf("invalid image_path argument")
+		}
+		
+		// Clear any previous vision usage before the call
+		tools.ClearLastVisionUsage()
+		
+		// UI screenshot analysis always uses optimized prompts for better caching
+		a.ToolLog("UI screenshot analysis", fmt.Sprintf("%s [optimized prompt]", 
+			filepath.Base(imagePath)))
+		
+		// Check for interrupt before expensive vision call
+		if a.CheckForInterrupt() {
+			return "", fmt.Errorf("🛑 UI analysis interrupted by user")
+		}
+		// Always use empty prompt for UI screenshots to maximize caching efficiency
+		result, err := tools.AnalyzeImage(imagePath, "", "frontend")
+		if err != nil {
+			return "", fmt.Errorf("UI screenshot analysis failed: %w", err)
+		}
+		
+		// Check if vision model usage needs to be tracked
+		if visionUsage := tools.GetLastVisionUsage(); visionUsage != nil {
+			// Add vision model costs to agent's tracking
+			a.totalCost += visionUsage.EstimatedCost
+			a.totalTokens += visionUsage.TotalTokens
+			a.promptTokens += visionUsage.PromptTokens
+			a.completionTokens += visionUsage.CompletionTokens
+			
+			// Always log vision costs (they're significant)
+			a.debugLog("💰 UI Screenshot call: %s [frontend] → %d tokens, $%.6f\n", 
+				filepath.Base(imagePath), visionUsage.TotalTokens, visionUsage.EstimatedCost)
+		}
+		
+		return result, nil
+
+	case "analyze_image_content":
 		imagePath, ok := args["image_path"].(string)
 		if !ok {
 			return "", fmt.Errorf("invalid image_path argument")
@@ -344,11 +383,40 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 			analysisPrompt = prompt
 		}
 		
-		a.ToolLog("image analysis", imagePath)
-		result, err := tools.AnalyzeImage(imagePath, analysisPrompt)
-		if err != nil {
-			return "", fmt.Errorf("image analysis failed: %w", err)
+		// Clear any previous vision usage before the call
+		tools.ClearLastVisionUsage()
+		
+		// Enhanced logging for content analysis
+		promptInfo := "auto"
+		if analysisPrompt != "" {
+			promptInfo = fmt.Sprintf("custom (%d chars)", len(analysisPrompt))
 		}
+		
+		a.ToolLog("image content analysis", fmt.Sprintf("%s [prompt:%s]", 
+			filepath.Base(imagePath), promptInfo))
+		
+		// Check for interrupt before expensive vision call
+		if a.CheckForInterrupt() {
+			return "", fmt.Errorf("🛑 Content analysis interrupted by user")
+		}
+		result, err := tools.AnalyzeImage(imagePath, analysisPrompt, "general")
+		if err != nil {
+			return "", fmt.Errorf("image content analysis failed: %w", err)
+		}
+		
+		// Check if vision model usage needs to be tracked
+		if visionUsage := tools.GetLastVisionUsage(); visionUsage != nil {
+			// Add vision model costs to agent's tracking
+			a.totalCost += visionUsage.EstimatedCost
+			a.totalTokens += visionUsage.TotalTokens
+			a.promptTokens += visionUsage.PromptTokens
+			a.completionTokens += visionUsage.CompletionTokens
+			
+			// Always log vision costs (they're significant)
+			a.debugLog("💰 Content Analysis call: %s [general] → %d tokens, $%.6f\n", 
+				filepath.Base(imagePath), visionUsage.TotalTokens, visionUsage.EstimatedCost)
+		}
+		
 		return result, nil
 
 	default:

@@ -29,6 +29,21 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 	for a.currentIteration < a.maxIterations {
 		a.currentIteration++
 
+		// Check for interrupt signal at the start of each iteration
+		if a.CheckForInterrupt() {
+			interruptMessage := a.HandleInterrupt()
+			if interruptMessage != "" {
+				// Inject user message into conversation
+				a.messages = append(a.messages, api.Message{
+					Role:    "user", 
+					Content: fmt.Sprintf("🛑 INTERRUPT: %s", interruptMessage),
+				})
+				a.debugLog("🛑 Interrupt processed, continuing with: %s\n", interruptMessage)
+			}
+			// Clear interrupt state and continue
+			a.ClearInterrupt()
+		}
+
 		a.debugLog("Iteration %d/%d\n", a.currentIteration, a.maxIterations)
 
 		// Optimize conversation before sending to API
@@ -295,8 +310,16 @@ func (a *Agent) processImagesInQuery(query string) (string, error) {
 		return query, nil
 	}
 	
-	// Create vision processor
-	processor, err := tools.NewVisionProcessor(a.debug)
+	// Determine analysis mode from query context
+	var analysisMode string
+	if containsFrontendKeywords(query) {
+		analysisMode = "frontend"
+	} else {
+		analysisMode = "general"
+	}
+
+	// Create vision processor with appropriate mode
+	processor, err := tools.NewVisionProcessorWithMode(a.debug, analysisMode)
 	if err != nil {
 		return query, fmt.Errorf("failed to create vision processor: %w", err)
 	}
@@ -316,4 +339,53 @@ func (a *Agent) processImagesInQuery(query string) (string, error) {
 	}
 	
 	return enhancedQuery, nil
+}
+
+// containsFrontendKeywords checks if the query contains frontend-related keywords
+func containsFrontendKeywords(query string) bool {
+	// High-priority frontend indicators
+	highPriorityKeywords := []string{
+		"react", "vue", "angular", "nextjs", "next.js", "svelte",
+		"app", "website", "webpage", "web app", "web application",
+		"frontend", "front-end", "ui", "user interface", "interface",
+		"layout", "design", "responsive", "mobile-first",
+		"css", "html", "styling", "styles", "stylesheet",
+		"component", "components", "widget", "widgets",
+		"dashboard", "landing page", "homepage", "navigation",
+		"mockup", "wireframe", "prototype", "screenshot",
+	}
+	
+	// Secondary frontend indicators  
+	secondaryKeywords := []string{
+		"colors", "palette", "theme", "branding",
+		"bootstrap", "tailwind", "material", "chakra",
+		"sass", "scss", "less", "styled-components",
+		"button", "form", "input", "modal", "dropdown",
+		"header", "footer", "sidebar", "menu",
+		"grid", "flexbox", "margin", "padding", "border",
+		"typography", "font", "text", "heading",
+		"animation", "transition", "hover", "interactive",
+	}
+	
+	queryLower := strings.ToLower(query)
+	
+	// Check high-priority keywords first (any match = frontend)
+	for _, keyword := range highPriorityKeywords {
+		if strings.Contains(queryLower, keyword) {
+			return true
+		}
+	}
+	
+	// Check for multiple secondary keywords (2+ matches = frontend)
+	matches := 0
+	for _, keyword := range secondaryKeywords {
+		if strings.Contains(queryLower, keyword) {
+			matches++
+			if matches >= 2 {
+				return true
+			}
+		}
+	}
+	
+	return false
 }

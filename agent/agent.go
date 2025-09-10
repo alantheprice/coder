@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/alantheprice/coder/api"
 	"github.com/alantheprice/coder/config"
@@ -34,6 +36,11 @@ type Agent struct {
 	maxContextTokens      int          // Model's maximum context window
 	contextWarningIssued  bool         // Whether we've warned about approaching context limit
 	shellCommandHistory   map[string]*ShellCommandResult // Track shell commands for deduplication
+	
+	// Interrupt handling
+	interruptRequested    bool               // Flag indicating interrupt was requested
+	interruptMessage      string             // User message to inject after interrupt
+	escPressed           chan bool           // Channel to signal Esc key press
 }
 
 
@@ -111,7 +118,13 @@ func NewAgentWithModel(model string) (*Agent, error) {
 		optimizer:           NewConversationOptimizer(optimizationEnabled, debug),
 		configManager:       configManager,
 		shellCommandHistory: make(map[string]*ShellCommandResult),
+		interruptRequested:  false,
+		interruptMessage:    "",
+		escPressed:          make(chan bool, 1),
 	}
+	
+	// Start Esc key monitoring goroutine
+	go agent.monitorEscKey()
 	
 	// Initialize context limits based on model
 	agent.maxContextTokens = agent.getModelContextLimit()
@@ -159,6 +172,85 @@ func (a *Agent) GetTotalCost() float64 {
 
 func (a *Agent) GetCurrentIteration() int {
 	return a.currentIteration
+}
+
+// monitorEscKey runs in a goroutine to monitor for Esc key presses
+func (a *Agent) monitorEscKey() {
+	reader := bufio.NewReader(os.Stdin)
+	
+	for {
+		// Read character with timeout
+		char, err := reader.ReadByte()
+		if err != nil {
+			// If there's an error reading, wait and try again
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		
+		// Check if it's the Esc key (ASCII 27)
+		if char == 27 {
+			// Send signal that Esc was pressed
+			select {
+			case a.escPressed <- true:
+			default:
+				// Channel is full, skip
+			}
+		}
+	}
+}
+
+// CheckForInterrupt checks if Esc key was pressed
+func (a *Agent) CheckForInterrupt() bool {
+	if a.interruptRequested {
+		return true
+	}
+	
+	// Check for Esc key press (non-blocking)
+	select {
+	case <-a.escPressed:
+		a.interruptRequested = true
+		return true
+	default:
+		return false
+	}
+}
+
+// HandleInterrupt processes an interrupt request and prompts for continuation
+func (a *Agent) HandleInterrupt() string {
+	fmt.Println("\n🛑 Esc key pressed! Current task paused.")
+	fmt.Println("💬 Enter instructions to modify or continue the current task:")
+	fmt.Println("   (or press Enter to resume, 'quit' to exit)")
+	fmt.Print(">>> ")
+	
+	var input string
+	fmt.Scanln(&input)
+	
+	input = strings.TrimSpace(input)
+	
+	switch input {
+	case "", "resume", "continue":
+		fmt.Println("▶️  Resuming current task...")
+		return ""
+	case "quit", "exit", "stop":
+		fmt.Println("🚪 Exiting...")
+		os.Exit(0)
+		return ""
+	default:
+		fmt.Printf("📝 Injecting new instruction: %s\n", input)
+		fmt.Println("▶️  Continuing with modified task...")
+		return input
+	}
+}
+
+// ClearInterrupt resets interrupt state
+func (a *Agent) ClearInterrupt() {
+	a.interruptRequested = false
+	a.interruptMessage = ""
+	// Drain any pending Esc signals
+	select {
+	case <-a.escPressed:
+	default:
+	}
 }
 
 func (a *Agent) GetMaxIterations() int {

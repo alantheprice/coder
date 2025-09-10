@@ -484,18 +484,39 @@ func GetToolDefinitions() []Tool {
 				Description string      `json:"description"`
 				Parameters  interface{} `json:"parameters"`
 			}{
-				Name:        "analyze_image",
-				Description: "Analyze images for UI design, code screenshots, diagrams, and other visual content to provide structured analysis",
+				Name:        "analyze_ui_screenshot",
+				Description: "Comprehensive analysis of UI screenshots, mockups, and web designs. Extracts colors, layout, components, styling, and generates implementation guidance for frontend development. Use this for ANY React/Vue/Angular app creation, website building, or UI design implementation. Uses optimized prompts for maximum caching efficiency.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"image_path": map[string]interface{}{
 							"type":        "string",
-							"description": "Path to image file or URL of image to analyze",
+							"description": "Path to UI screenshot, mockup, or design file",
+						},
+					},
+					"required": []string{"image_path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: struct {
+				Name        string      `json:"name"`
+				Description string      `json:"description"`
+				Parameters  interface{} `json:"parameters"`
+			}{
+				Name:        "analyze_image_content",
+				Description: "General image analysis for text extraction, code screenshots, diagrams, and non-UI content. Use only for document text extraction, reading code from screenshots, or analyzing non-UI visual content.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"image_path": map[string]interface{}{
+							"type":        "string",
+							"description": "Path to image file containing text, code, or general content",
 						},
 						"analysis_prompt": map[string]interface{}{
 							"type":        "string",
-							"description": "Optional specific prompt for what to analyze in the image (UI elements, code structure, design patterns, etc.)",
+							"description": "Optional specific prompt for content extraction (extract text, read code, analyze diagram, etc.)",
 						},
 					},
 					"required": []string{"image_path"},

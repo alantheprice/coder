@@ -15,6 +15,11 @@ import (
 	"github.com/alantheprice/coder/api"
 )
 
+// Global variables for vision model tracking and caching
+var lastVisionUsage *VisionUsageInfo
+var visionCache = make(map[string]string) // cache key -> result
+var visionCacheUsage = make(map[string]*VisionUsageInfo) // cache key -> usage info
+
 // VisionAnalysis represents the result of vision model analysis
 type VisionAnalysis struct {
 	ImagePath   string `json:"image_path"`
@@ -42,6 +47,34 @@ type VisionProcessor struct {
 func NewVisionProcessor(debug bool) (*VisionProcessor, error) {
 	// Try to create a vision-capable client (GPT-4V via OpenRouter)
 	client, err := createVisionClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create vision client: %w", err)
+	}
+
+	return &VisionProcessor{
+		visionClient: client,
+		debug:        debug,
+	}, nil
+}
+
+// NewVisionProcessorWithMode creates a vision processor optimized for specific analysis mode
+func NewVisionProcessorWithMode(debug bool, mode string) (*VisionProcessor, error) {
+	var client api.ClientInterface
+	var err error
+
+	// Choose optimal model based on analysis mode
+	switch strings.ToLower(mode) {
+	case "frontend", "design", "ui", "html", "css":
+		// Use gemma-3-27b-it for comprehensive frontend analysis
+		client, err = createVisionClientWithModel("google/gemma-3-27b-it")
+	case "general", "text", "content", "extract", "analyze":
+		// Use llama-4-maverick for fast general analysis
+		client, err = createVisionClientWithModel("meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8")
+	default:
+		// Default to balanced approach (current implementation)
+		client, err = createVisionClient()
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to create vision client: %w", err)
 	}
@@ -92,6 +125,76 @@ func createVisionClient() (api.ClientInterface, error) {
 	}
 	
 	return nil, fmt.Errorf("no vision-capable providers available - please set up OPENROUTER_API_KEY, DEEPINFRA_API_KEY, GROQ_API_KEY, or install Ollama with a vision model")
+}
+
+// createVisionClientWithModel creates a vision client using a specific model
+func createVisionClientWithModel(modelName string) (api.ClientInterface, error) {
+	// Determine which provider supports this model
+	if strings.HasPrefix(modelName, "google/") || strings.HasPrefix(modelName, "meta-llama/") {
+		// DeepInfra model
+		if apiKey := os.Getenv("DEEPINFRA_API_KEY"); apiKey != "" {
+			wrapper, err := api.NewDeepInfraClientWrapper(modelName)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create DeepInfra client: %w", err)
+			}
+			return wrapper, nil
+		}
+		return nil, fmt.Errorf("DEEPINFRA_API_KEY not set for model %s", modelName)
+	}
+
+	// Fall back to default client creation
+	return createVisionClient()
+}
+
+// generatePromptForMode creates appropriate prompts based on analysis mode
+func generatePromptForMode(mode string) string {
+	switch strings.ToLower(mode) {
+	case "frontend", "design", "ui", "html", "css":
+		return `You are an expert frontend engineer specializing in converting UI designs and screenshots into pixel-perfect responsive web layouts. Analyze this UI screenshot and provide:
+
+1. **Colors**: Extract primary colors with hex values for:
+   - Primary brand colors
+   - Secondary/accent colors  
+   - Text colors (primary, secondary, muted)
+   - Background colors
+   - Border colors
+
+2. **Layout Structure**: Describe the overall layout pattern:
+   - Grid/flexbox structure
+   - Component hierarchy
+   - Responsive breakpoint considerations
+
+3. **Typography**: Identify font details:
+   - Font families used
+   - Font sizes and weights
+   - Text hierarchy
+
+4. **CSS Implementation**: Provide key CSS properties:
+   - Exact spacing and padding values
+   - Border-radius and shadows
+   - Responsive design patterns
+
+5. **Design Tokens**: Create a design system:
+   - Color palette
+   - Spacing scale
+   - Typography scale
+
+Focus on accuracy and detail that would be useful for a developer implementing this design.`
+
+	case "general", "text", "content", "extract", "analyze":
+		return `Analyze this image and provide:
+
+1. **Content Description**: What does this image show?
+2. **Text Extraction**: Any visible text, code, or written content
+3. **Technical Details**: Code, interfaces, diagrams, or technical elements
+4. **Context**: How this relates to the user's query or task
+5. **Key Information**: Important details for understanding or implementation
+
+Be thorough but concise, focusing on actionable information.`
+
+	default:
+		return "Analyze this image for software development purposes. Describe what you see, identify any UI elements, code, diagrams, or design patterns. Provide structured information that would be useful for a developer."
+	}
 }
 
 // ProcessImagesInText detects images in text and processes them with vision models
@@ -209,6 +312,16 @@ func (vp *VisionProcessor) analyzeImage(imagePath string) (VisionAnalysis, error
 		return VisionAnalysis{}, fmt.Errorf("vision request failed: %w", err)
 	}
 
+	// Store usage information for cost tracking
+	if response.Usage.TotalTokens > 0 {
+		lastVisionUsage = &VisionUsageInfo{
+			PromptTokens:     response.Usage.PromptTokens,
+			CompletionTokens: response.Usage.CompletionTokens,
+			TotalTokens:      response.Usage.TotalTokens,
+			EstimatedCost:    response.Usage.EstimatedCost,
+		}
+	}
+
 	// Extract response content
 	if len(response.Choices) == 0 {
 		return VisionAnalysis{}, fmt.Errorf("no response from vision model")
@@ -259,6 +372,16 @@ func (vp *VisionProcessor) analyzeImageWithPrompt(imagePath string, customPrompt
 	response, err := vp.visionClient.SendVisionRequest(messages, nil, "")
 	if err != nil {
 		return VisionAnalysis{}, fmt.Errorf("vision request failed: %w", err)
+	}
+
+	// Store usage information for cost tracking
+	if response.Usage.TotalTokens > 0 {
+		lastVisionUsage = &VisionUsageInfo{
+			PromptTokens:     response.Usage.PromptTokens,
+			CompletionTokens: response.Usage.CompletionTokens,
+			TotalTokens:      response.Usage.TotalTokens,
+			EstimatedCost:    response.Usage.EstimatedCost,
+		}
 	}
 
 	// Extract response content
@@ -530,22 +653,73 @@ func HasVisionCapability() bool {
 	return false
 }
 
+// VisionUsageInfo contains token usage and cost information from vision model calls
+type VisionUsageInfo struct {
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	EstimatedCost    float64 `json:"estimated_cost"`
+}
+
+// GetLastVisionUsage returns the usage information from the last vision model call
+func GetLastVisionUsage() *VisionUsageInfo {
+	return lastVisionUsage
+}
+
+// ClearLastVisionUsage clears the stored vision usage information
+func ClearLastVisionUsage() {
+	lastVisionUsage = nil
+}
+
+// GetVisionCacheStats returns statistics about vision result caching
+func GetVisionCacheStats() map[string]interface{} {
+	stats := make(map[string]interface{})
+	stats["cached_results"] = len(visionCache)
+	
+	totalSavedCost := 0.0
+	for _, usage := range visionCacheUsage {
+		totalSavedCost += usage.EstimatedCost
+	}
+	stats["estimated_savings"] = totalSavedCost
+	
+	return stats
+}
+
 // AnalyzeImage is the tool function called by the agent for image analysis
-func AnalyzeImage(imagePath string, analysisPrompt string) (string, error) {
+func AnalyzeImage(imagePath string, analysisPrompt string, analysisMode string) (string, error) {
 	if !HasVisionCapability() {
 		return "", fmt.Errorf("vision analysis not available - please set up OPENROUTER_API_KEY, DEEPINFRA_API_KEY, GROQ_API_KEY, or install Ollama with a vision model")
 	}
 
-	// Create vision processor
-	processor, err := NewVisionProcessor(false) // debug = false
+	// Create cache key based on image path, mode, and prompt
+	cacheKey := fmt.Sprintf("%s|%s|%s", imagePath, analysisMode, analysisPrompt)
+	
+	// Check cache first
+	if cachedResult, exists := visionCache[cacheKey]; exists {
+		fmt.Printf("🔄 Using cached vision analysis for %s [%s]\n", filepath.Base(imagePath), analysisMode)
+		
+		// Restore cached usage info for cost tracking
+		if cachedUsage, hasUsage := visionCacheUsage[cacheKey]; hasUsage {
+			lastVisionUsage = cachedUsage
+		}
+		
+		return cachedResult, nil
+	}
+
+	// Create vision processor with appropriate model based on mode
+	processor, err := NewVisionProcessorWithMode(false, analysisMode) // debug = false
 	if err != nil {
 		return "", fmt.Errorf("failed to create vision processor: %w", err)
 	}
 
-	// Perform analysis with custom prompt if provided
-	prompt := analysisPrompt
-	if prompt == "" {
-		prompt = "Analyze this image for software development purposes. Describe what you see, identify any UI elements, code, diagrams, or design patterns. Provide structured information that would be useful for a developer."
+	// Determine the appropriate prompt based on analysis mode
+	var prompt string
+	if analysisPrompt != "" {
+		// User provided custom prompt - use it directly
+		prompt = analysisPrompt
+	} else {
+		// Generate appropriate prompt based on mode
+		prompt = generatePromptForMode(analysisMode)
 	}
 
 	analysis, err := processor.analyzeImageWithPrompt(imagePath, prompt)
@@ -578,6 +752,12 @@ func AnalyzeImage(imagePath string, analysisPrompt string) (string, error) {
 		for _, suggestion := range analysis.Suggestions {
 			result += fmt.Sprintf("- %s\n", suggestion)
 		}
+	}
+
+	// Cache the result and usage info for future calls
+	visionCache[cacheKey] = result
+	if lastVisionUsage != nil {
+		visionCacheUsage[cacheKey] = lastVisionUsage
 	}
 
 	return result, nil

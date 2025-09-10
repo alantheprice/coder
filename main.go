@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/alantheprice/coder/agent"
 	"github.com/alantheprice/coder/api"
@@ -160,11 +162,24 @@ func main() {
 
 	debugLog(debug, "💡 Tip: Use arrow keys to navigate, backspace to edit, up/down for history, Ctrl+C to exit\n")
 
+	// Set up a channel to catch interrupt signals for graceful shutdown
+	interruptChannel := make(chan os.Signal, 1)
+	signal.Notify(interruptChannel, syscall.SIGINT, syscall.SIGTERM)
+
+	// Goroutine to handle graceful shutdown
+	go func() {
+		<-interruptChannel
+		fmt.Println("\n🛑 Interrupt received! Shutting down gracefully...")
+		chatAgent.PrintConciseSummary()
+		os.Exit(0)
+	}()
+
 	for {
 		query, err := rl.Readline()
 		if err != nil {
 			if err == readline.ErrInterrupt {
-				debugLog(debug, "Goodbye!\n")
+				fmt.Println("\n👋 Goodbye! Here's your session summary:")
+				chatAgent.PrintConciseSummary()
 				break
 			}
 			log.Fatalf("Error reading input: %v", err)
@@ -177,7 +192,8 @@ func main() {
 		}
 
 		if query == "exit" || query == "quit" {
-			debugLog(debug, "Goodbye!\n")
+			fmt.Println("👋 Goodbye! Here's your session summary:")
+			chatAgent.PrintConciseSummary()
 			break
 		}
 
