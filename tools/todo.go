@@ -630,3 +630,22 @@ func GetAllTodos() []TodoItem {
 	copy(todos, globalTodoManager.items)
 	return todos
 }
+
+// GetCompletedTasks returns a list of completed task descriptions for session continuity
+func GetCompletedTasks() []string {
+	globalTodoManager.mutex.RLock()
+	defer globalTodoManager.mutex.RUnlock()
+	
+	var completed []string
+	for _, item := range globalTodoManager.items {
+		if item.Status == "completed" {
+			if item.Description != "" {
+				completed = append(completed, fmt.Sprintf("%s: %s", item.Title, item.Description))
+			} else {
+				completed = append(completed, item.Title)
+			}
+		}
+	}
+	
+	return completed
+}

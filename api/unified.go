@@ -154,3 +154,11 @@ func NewOpenRouterProvider(model string) (ClientInterface, error) {
 	}
 	return NewUnifiedProviderWrapper(provider), nil
 }
+
+func NewCerebrasProvider(model string) (ClientInterface, error) {
+	provider, err := providers.NewCerebrasProviderWithModel(model)
+	if err != nil {
+		return nil, err
+	}
+	return NewUnifiedProviderWrapper(provider), nil
+}

@@ -71,8 +71,7 @@ func NewDeepInfraClientWrapper(model string) (ClientInterface, error) {
 
 // NewCerebrasClientWrapper creates a Cerebras client wrapper
 func NewCerebrasClientWrapper(model string) (ClientInterface, error) {
-	// For now, return an error since Cerebras provider is not fully implemented
-	return nil, fmt.Errorf("Cerebras provider not yet implemented")
+	return NewCerebrasProvider(model)
 }
 
 // NewOpenRouterClientWrapper creates an OpenRouter client wrapper
@@ -239,14 +238,49 @@ type DeepInfraClientWrapper struct {
 }
 
 func (w *DeepInfraClientWrapper) SendChatRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error) {
+	// Calculate context-aware max_tokens to avoid exceeding model limits
+	maxTokens := w.calculateMaxTokens(messages, tools)
+	
 	req := ChatRequest{
 		Model:     w.client.model,
 		Messages:  messages,
 		Tools:     tools,
-		MaxTokens: 100000,
+		MaxTokens: maxTokens,
 		Reasoning: reasoning,
 	}
 	return w.client.SendChatRequest(req)
+}
+
+// calculateMaxTokens calculates appropriate max_tokens based on input size and model limits
+func (w *DeepInfraClientWrapper) calculateMaxTokens(messages []Message, tools []Tool) int {
+	// Get model context limit
+	contextLimit, err := w.GetModelContextLimit()
+	if err != nil || contextLimit == 0 {
+		contextLimit = 32000 // Conservative default
+	}
+	
+	// Rough estimation: 1 token ≈ 4 characters
+	inputTokens := 0
+	
+	// Estimate tokens from messages
+	for _, msg := range messages {
+		inputTokens += len(msg.Content) / 4
+	}
+	
+	// Estimate tokens from tools (tools descriptions can be large)
+	inputTokens += len(tools) * 200 // Rough estimate per tool
+	
+	// Reserve buffer for safety and leave room for response
+	maxOutput := contextLimit - inputTokens - 1000 // 1000 token safety buffer
+	
+	// Ensure reasonable bounds
+	if maxOutput > 16000 {
+		maxOutput = 16000 // Cap at 16K for most responses
+	} else if maxOutput < 1000 {
+		maxOutput = 1000 // Minimum useful response size
+	}
+	
+	return maxOutput
 }
 
 func (w *DeepInfraClientWrapper) CheckConnection() error {
@@ -304,4 +338,6 @@ func (w *DeepInfraClientWrapper) GetModelContextLimit() (int, error) {
 		return 32000, nil  // Conservative default
 	}
 }
+
+
 

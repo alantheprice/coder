@@ -59,9 +59,15 @@ func main() {
 		}
 	}
 
-	// Initialize the agent with optional model
+	// Initialize the agent with optional model and provider
 	var chatAgent *agent.Agent
 	var err error
+
+	// If model is specified, provider must also be specified (unless --local is used)
+	if model != "" && provider == "" && !useLocal {
+		log.Fatalf("Error: When specifying a model with --model, you must also specify --provider.\nExample: ./coder --provider=openrouter --model=deepseek/deepseek-chat-v3.1:free \"your query\"")
+	}
+
 	if model != "" {
 		chatAgent, err = agent.NewAgentWithModel(model)
 	} else {
@@ -80,16 +86,18 @@ func main() {
 	providerType := api.GetClientTypeFromEnv()
 	providerName := api.GetProviderName(providerType)
 	modelName := chatAgent.GetModel()
-	
+
 	if providerType == api.OllamaClientType {
+		fmt.Printf("🤖 Selected model: %s via %s\n", modelName, providerName)
 		debugLog(debug, "🏠 Using local gpt-oss:20b model via Ollama\n")
 		debugLog(debug, "💰 Cost: FREE (local inference)\n")
 	} else {
 		if api.IsGPTOSSModel(modelName) {
-			debugLog(debug, "☁️  Using %s model via %s (harmony syntax)\n", modelName, providerName)
+			fmt.Printf("🤖 Selected model: %s via %s (harmony syntax)\n", modelName, providerName)
 		} else {
-			debugLog(debug, "☁️  Using %s model via %s (standard format)\n", modelName, providerName)
+			fmt.Printf("🤖 Selected model: %s via %s (standard format)\n", modelName, providerName)
 		}
+		debugLog(debug, "☁️  Using %s model via %s\n", modelName, providerName)
 		debugLog(debug, "💰 Cost: Pay per use (see /models for pricing)\n")
 	}
 
@@ -152,10 +160,6 @@ func main() {
 
 	debugLog(debug, "💡 Tip: Use arrow keys to navigate, backspace to edit, up/down for history, Ctrl+C to exit\n")
 
-	// Show selected model before prompt
-	currentModel := chatAgent.GetModel()
-	fmt.Printf("🤖 Selected model: %s\n", currentModel)
-
 	for {
 		query, err := rl.Readline()
 		if err != nil {
@@ -198,7 +202,7 @@ func main() {
 // isShellCommand checks if the input looks like a shell command
 func isShellCommand(input string) bool {
 	input = strings.TrimSpace(input)
-	
+
 	// Common shell command prefixes
 	shellPrefixes := []string{
 		"ls", "cd", "pwd", "cat", "echo", "grep", "find", "git",
@@ -211,19 +215,19 @@ func isShellCommand(input string) bool {
 		"sed", "cut", "sort", "uniq", "wc", "tee", "xargs", "env",
 		"export", "source", "./", ".\\", "#", "$",
 	}
-	
+
 	for _, prefix := range shellPrefixes {
 		if strings.HasPrefix(input, prefix) {
 			return true
 		}
 	}
-	
+
 	// Check for shell operators and redirection (but be more specific to avoid false positives)
 	if strings.Contains(input, " && ") || strings.Contains(input, " || ") ||
 		strings.Contains(input, " | ") {
 		return true
 	}
-	
+
 	// Check for redirection operators with surrounding spaces or at word boundaries
 	// This avoids matching things like '<|return|>' or 'file<something>'
 	if strings.Contains(input, " > ") || strings.Contains(input, " >> ") ||
@@ -232,7 +236,7 @@ func isShellCommand(input string) bool {
 		strings.HasPrefix(input, "<") {
 		return true
 	}
-	
+
 	return false
 }
 
@@ -240,7 +244,7 @@ func isShellCommand(input string) bool {
 func executeShellCommandDirectly(command string, debug bool) {
 	debugLog(debug, "⚡ Direct shell command detected: %s\n", command)
 	debugLog(debug, "=====================================\n")
-	
+
 	result, err := tools.ExecuteShellCommand(command)
 	if err != nil {
 		fmt.Printf("❌ Command failed: %v\n", err)
@@ -249,7 +253,7 @@ func executeShellCommandDirectly(command string, debug bool) {
 		fmt.Printf("✅ Command executed successfully:\n")
 		fmt.Printf("Output: %s\n", result)
 	}
-	
+
 	debugLog(debug, "=====================================\n")
 }
 
@@ -259,12 +263,12 @@ func processQuery(chatAgent *agent.Agent, query string, debug bool) {
 		executeShellCommandDirectly(query, debug)
 		return
 	}
-	
+
 	// Validate input length before sending to LLM
 	if !validateQueryLength(query) {
 		return
 	}
-	
+
 	debugLog(debug, "\n🔍 Processing your query...\n")
 	debugLog(debug, "Query: %s\n", query)
 	debugLog(debug, "=====================================\n")
@@ -282,40 +286,45 @@ func processQuery(chatAgent *agent.Agent, query string, debug bool) {
 
 	// Print conversation summary (always show)
 	chatAgent.PrintConversationSummary()
-	
+
 	// Save conversation state for continuity
 	if err := chatAgent.SaveState("default"); err != nil {
 		debugLog(debug, "Warning: Failed to save conversation state: %v\n", err)
+	}
+
+	// Generate and save conversation summary for next run continuity
+	if err := chatAgent.SaveConversationSummary(); err != nil {
+		debugLog(debug, "Warning: Failed to save conversation summary: %v\n", err)
 	}
 }
 
 // validateQueryLength validates query length and prompts for confirmation if needed
 func validateQueryLength(query string) bool {
 	queryLen := len(strings.TrimSpace(query))
-	
+
 	// Absolute minimum: reject anything under 3 characters
 	if queryLen < 3 {
 		fmt.Printf("❌ Query too short (%d characters). Minimum 3 characters required.\n", queryLen)
 		return false
 	}
-	
+
 	// For queries under 20 characters, ask for confirmation
 	if queryLen < 20 {
 		fmt.Printf("⚠️  Short query detected (%d characters): \"%s\"\n", queryLen, query)
 		fmt.Print("Are you sure you want to process this? (y/N): ")
-		
+
 		var response string
 		fmt.Scanln(&response)
 		response = strings.ToLower(strings.TrimSpace(response))
-		
+
 		if response != "y" && response != "yes" {
 			fmt.Println("❌ Query cancelled.")
 			return false
 		}
-		
+
 		fmt.Println("✅ Proceeding with short query...")
 	}
-	
+
 	return true
 }
 
@@ -333,7 +342,7 @@ USAGE:
   Interactive mode:     ./coder
   Non-interactive:      ./coder "your query here"
   Local inference:      ./coder --local "your query"
-  Custom model:         ./coder --model=meta-llama/Meta-Llama-3.1-70B-Instruct "your query"
+  Custom model:         ./coder --provider=deepinfra --model=meta-llama/Meta-Llama-3.1-70B-Instruct "your query"
   Custom provider:      ./coder --provider=ollama "your query"
   Piped input:         echo "your query" | ./coder
   Help:                ./coder --help
@@ -371,8 +380,8 @@ EXAMPLES:
   # Local inference
   ./coder --local "Create a Python calculator"
   
-  # Use a different model
-  ./coder --model=meta-llama/Meta-Llama-3.1-70B-Instruct "Create a Python calculator"
+  # Use a different model (provider must be specified)
+  ./coder --provider=deepinfra --model=meta-llama/Meta-Llama-3.1-70B-Instruct "Create a Python calculator"
   
   # Piped input
   echo "Fix the bug in main.go where the variable is undefined" | ./coder
@@ -412,7 +421,7 @@ func setProviderOverride(providerName string, useLocal bool) error {
 	if err != nil {
 		return fmt.Errorf("unknown provider '%s'. Available: deepinfra, ollama, cerebras, openrouter, groq, deepseek", providerName)
 	}
-	
+
 	// For local flag, force to Ollama and disable API keys temporarily
 	if useLocal || provider == api.OllamaClientType {
 		// Backup and unset API keys to force Ollama
@@ -439,7 +448,7 @@ func setProviderOverride(providerName string, useLocal bool) error {
 		fmt.Printf("📍 Using local inference (Ollama)\n")
 		return nil
 	}
-	
+
 	// For other providers, temporarily unset other API keys to force selection
 	switch provider {
 	case api.DeepInfraClientType:
@@ -460,9 +469,9 @@ func setProviderOverride(providerName string, useLocal bool) error {
 			os.Setenv("DEEPSEEK_API_KEY_BACKUP", os.Getenv("DEEPSEEK_API_KEY"))
 			os.Unsetenv("DEEPSEEK_API_KEY")
 		}
-	// Add similar cases for other providers as needed
+		// Add similar cases for other providers as needed
 	}
-	
+
 	fmt.Printf("📍 Using provider: %s\n", api.GetProviderName(provider))
 	return nil
 }

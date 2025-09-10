@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/alantheprice/coder/providers"
+	"github.com/alantheprice/coder/types"
 )
 
 // ModelInfo represents information about an available model
@@ -36,7 +39,26 @@ type ModelsListInterface interface {
 // GetAvailableModels returns available models for the current provider
 func GetAvailableModels() ([]ModelInfo, error) {
 	clientType := GetClientTypeFromEnv()
+	return GetModelsForProvider(clientType)
+}
+
+// GetModelsForProvider returns available models for a specific provider
+func GetModelsForProvider(clientType ClientType) ([]ModelInfo, error) {
+	// Try to use the provider's ListModels method first
+	provider, err := createProviderForType(clientType)
+	if err == nil && provider != nil {
+		typesModels, listErr := provider.ListModels()
+		if listErr == nil {
+			// Convert from types.ModelInfo to api.ModelInfo
+			apiModels := make([]ModelInfo, len(typesModels))
+			for i, typesModel := range typesModels {
+				apiModels[i] = convertTypesToAPI(typesModel)
+			}
+			return apiModels, nil
+		}
+	}
 	
+	// Fallback to hardcoded model fetchers if provider method fails
 	switch clientType {
 	case DeepInfraClientType:
 		return getDeepInfraModels()
@@ -213,29 +235,60 @@ func getOllamaModels() ([]ModelInfo, error) {
 
 // getCerebrasModels gets available models from Cerebras API
 func getCerebrasModels() ([]ModelInfo, error) {
-	// Cerebras API doesn't have a models endpoint, return static list
-	return []ModelInfo{
-		{
-			ID:          "cerebras/btlm-3b-8k-base",
-			Name:        "BTLM-3B-8K-Base",
-			Description: "Cerebras BTLM-3B-8K-Base model",
-			Provider:    "Cerebras",
-			ContextLength: 8192,
-			Cost:        0.0003, // $0.30 per million tokens
-			InputCost:   0.0003,
-			OutputCost:  0.0003,
-		},
-		{
-			ID:          "cerebras/cerebras-gpt-13b",
-			Name:        "Cerebras-GPT-13B",
-			Description: "Cerebras GPT-13B model",
-			Provider:    "Cerebras",
-			ContextLength: 2048,
-			Cost:        0.0006, // $0.60 per million tokens
-			InputCost:   0.0006,
-			OutputCost:  0.0006,
-		},
-	}, nil
+	apiKey := os.Getenv("CEREBRAS_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("CEREBRAS_API_KEY not set")
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	
+	req, err := http.NewRequest("GET", "https://api.cerebras.ai/v1/models", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get models: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Cerebras API error (status %d): %s", resp.StatusCode, string(body))
+	}
+	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	
+	var response struct {
+		Object string `json:"object"`
+		Data   []struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			Created int64  `json:"created"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+	}
+	
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	models := make([]ModelInfo, len(response.Data))
+	for i, model := range response.Data {
+		models[i] = ModelInfo{
+			ID:       model.ID,
+			Name:     model.ID,
+			Provider: "Cerebras",
+		}
+	}
+	
+	return models, nil
 }
 
 // getOpenRouterModels gets available models from OpenRouter API
@@ -580,4 +633,33 @@ func getDeepSeekModels() ([]ModelInfo, error) {
 	}
 	
 	return models, nil
+}
+// createProviderForType creates a provider instance for the given client type
+func createProviderForType(clientType ClientType) (types.ProviderInterface, error) {
+	switch clientType {
+	case CerebrasClientType:
+		return providers.NewCerebrasProvider()
+	case OpenRouterClientType:
+		return providers.NewOpenRouterProvider()
+	// DeepInfra provider is incomplete, will use fallback
+	case DeepInfraClientType:
+		return nil, fmt.Errorf("DeepInfra provider incomplete, using fallback")
+	// Add other providers as they implement ListModels
+	default:
+		return nil, fmt.Errorf("provider %s does not support ListModels yet", clientType)
+	}
+}
+
+// convertTypesToAPI converts types.ModelInfo to api.ModelInfo  
+func convertTypesToAPI(typesModel types.ModelInfo) ModelInfo {
+	return ModelInfo{
+		ID:            typesModel.ID,
+		Name:          typesModel.Name,
+		Provider:      typesModel.Provider,
+		Description:   typesModel.Description,
+		ContextLength: typesModel.ContextLength,
+		InputCost:     typesModel.InputCost,
+		OutputCost:    typesModel.OutputCost,
+		Cost:          typesModel.Cost,
+	}
 }

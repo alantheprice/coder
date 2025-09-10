@@ -27,7 +27,7 @@ func (m *ModelsCommand) Description() string {
 func (m *ModelsCommand) Execute(args []string, chatAgent *agent.Agent) error {
 	// If no arguments, list available models
 	if len(args) == 0 {
-		return m.listModels()
+		return m.listModels(chatAgent)
 	}
 
 	// If arguments provided, handle model selection
@@ -43,24 +43,26 @@ func (m *ModelsCommand) Execute(args []string, chatAgent *agent.Agent) error {
 	return fmt.Errorf("usage: /models [select|<model_id>]")
 }
 
-// listModels displays all available models
-func (m *ModelsCommand) listModels() error {
-	fmt.Println("\n📋 Available Models:")
+// listModels displays all available models for the current provider
+func (m *ModelsCommand) listModels(chatAgent *agent.Agent) error {
+	// Get current provider from agent, not environment
+	clientType := chatAgent.GetProviderType()
+	providerName := api.GetProviderName(clientType)
+	
+	fmt.Printf("\n📋 Available Models (%s):\n", providerName)
 	fmt.Println("====================")
 
-	models, err := api.GetAvailableModels()
+	models, err := api.GetModelsForProvider(clientType)
 	if err != nil {
 		return fmt.Errorf("failed to get available models: %w", err)
 	}
 
 	if len(models) == 0 {
-		fmt.Println("No models available.")
+		fmt.Printf("No models available for %s.\n", providerName)
+		fmt.Println()
+		fmt.Println("💡 Tip: Use '/provider select' to switch to a different provider")
 		return nil
 	}
-
-	// Get current provider info
-	clientType := api.GetClientTypeFromEnv()
-	fmt.Printf("Provider: %s\n\n", clientType)
 
 	// Sort models alphabetically by model ID
 	sort.Slice(models, func(i, j int) bool {
@@ -137,9 +139,10 @@ func (m *ModelsCommand) listModels() error {
 	}
 
 	fmt.Println("Usage:")
-	fmt.Println("  /models select          - Interactive model selection")
+	fmt.Println("  /models select          - Interactive model selection (current provider)")
 	fmt.Println("  /models <model_id>      - Set model directly")
 	fmt.Println("  /models                 - Show this list")
+	fmt.Println("  /provider select        - Switch providers first, then select models")
 
 	return nil
 }
@@ -170,15 +173,21 @@ func (m *ModelsCommand) findFeaturedModels(models []api.ModelInfo) []int {
 	return featured
 }
 
-// selectModel allows interactive model selection
+// selectModel allows interactive model selection from the current provider
 func (m *ModelsCommand) selectModel(chatAgent *agent.Agent) error {
-	models, err := api.GetAvailableModels()
+	// Get current provider from agent, not environment
+	clientType := chatAgent.GetProviderType()
+	providerName := api.GetProviderName(clientType)
+	
+	models, err := api.GetModelsForProvider(clientType)
 	if err != nil {
 		return fmt.Errorf("failed to get available models: %w", err)
 	}
 
 	if len(models) == 0 {
-		fmt.Println("No models available.")
+		fmt.Printf("No models available for %s.\n", providerName)
+		fmt.Println()
+		fmt.Println("💡 Tip: Use '/provider select' to switch to a different provider with available models")
 		return nil
 	}
 
@@ -190,11 +199,11 @@ func (m *ModelsCommand) selectModel(chatAgent *agent.Agent) error {
 	// Identify featured models
 	featuredIndices := m.findFeaturedModels(models)
 
-	fmt.Println("\n🎯 Select a Model:")
+	fmt.Printf("\n🎯 Select a Model (%s):\n", providerName)
 	fmt.Println("==================")
 
-	fmt.Println("All Models:")
-	fmt.Println("===========")
+	fmt.Printf("All %s Models:\n", providerName)
+	fmt.Println("===============")
 	// Display all models with numbers
 	for i, model := range models {
 		fmt.Printf("%d. \x1b[34m%s\x1b[0m", i+1, model.ID)
@@ -257,8 +266,9 @@ func (m *ModelsCommand) selectModel(chatAgent *agent.Agent) error {
 
 // setModel sets the specified model for the agent
 func (m *ModelsCommand) setModel(modelID string, chatAgent *agent.Agent) error {
-	// Validate that the model exists
-	models, err := api.GetAvailableModels()
+	// Validate that the model exists in the current provider
+	clientType := chatAgent.GetProviderType()
+	models, err := api.GetModelsForProvider(clientType)
 	if err != nil {
 		return fmt.Errorf("failed to validate model: %w", err)
 	}
@@ -272,7 +282,8 @@ func (m *ModelsCommand) setModel(modelID string, chatAgent *agent.Agent) error {
 	}
 
 	if selectedModel == nil {
-		return fmt.Errorf("model '%s' not found. Use '/models' to see available models", modelID)
+		providerName := api.GetProviderName(clientType)
+		return fmt.Errorf("model '%s' not found in provider %s. Use '/models' to see available models for this provider", modelID, providerName)
 	}
 
 	// For OpenRouter models, validate availability first

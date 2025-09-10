@@ -61,11 +61,14 @@ func (p *OpenRouterProvider) SendChatRequest(messages []types.Message, tools []t
 		}
 	}
 
+	// Calculate appropriate max_tokens based on context limits
+	maxTokens := p.calculateMaxTokens(messages, tools)
+	
 	// Build request payload
 	requestBody := map[string]interface{}{
 		"model":       p.model,
 		"messages":    openRouterMessages,
-		"max_tokens":  100000,
+		"max_tokens":  maxTokens,
 		"temperature": 0.7,
 	}
 
@@ -166,6 +169,84 @@ func (p *OpenRouterProvider) GetModelContextLimit() (int, error) {
 	}
 }
 
+// ListModels returns available models from OpenRouter API
+func (p *OpenRouterProvider) ListModels() ([]types.ModelInfo, error) {
+	httpReq, err := http.NewRequest("GET", "https://openrouter.ai/api/v1/models", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiToken)
+	httpReq.Header.Set("HTTP-Referer", "https://github.com/alantheprice/coder")
+	httpReq.Header.Set("X-Title", "Coder AI Assistant")
+
+	resp, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get models: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("OpenRouter API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var response struct {
+		Data []struct {
+			ID            string `json:"id"`
+			Name          string `json:"name"`
+			Description   string `json:"description"`
+			ContextLength int    `json:"context_length"`
+			Pricing       *struct {
+				Prompt     string `json:"prompt"`
+				Completion string `json:"completion"`
+			} `json:"pricing"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	models := make([]types.ModelInfo, len(response.Data))
+	for i, model := range response.Data {
+		modelInfo := types.ModelInfo{
+			ID:       model.ID,
+			Name:     model.Name,
+			Provider: "openrouter",
+		}
+		
+		if model.Description != "" {
+			modelInfo.Description = model.Description
+		}
+		if model.ContextLength > 0 {
+			modelInfo.ContextLength = model.ContextLength
+		}
+		
+		// Parse pricing if available
+		if model.Pricing != nil {
+			if promptCost, err := strconv.ParseFloat(model.Pricing.Prompt, 64); err == nil {
+				modelInfo.InputCost = promptCost
+			}
+			if completionCost, err := strconv.ParseFloat(model.Pricing.Completion, 64); err == nil {
+				modelInfo.OutputCost = completionCost
+			}
+			if modelInfo.InputCost > 0 || modelInfo.OutputCost > 0 {
+				modelInfo.Cost = (modelInfo.InputCost + modelInfo.OutputCost) / 2.0
+			}
+		}
+		
+		models[i] = modelInfo
+	}
+
+	return models, nil
+}
+
 // sendRequestWithRetry implements exponential backoff retry logic for rate limits
 func (p *OpenRouterProvider) sendRequestWithRetry(httpReq *http.Request, reqBody []byte) (*types.ChatResponse, error) {
 	maxRetries := 3
@@ -233,6 +314,38 @@ func (p *OpenRouterProvider) sendRequestWithRetry(httpReq *http.Request, reqBody
 	}
 
 	return nil, fmt.Errorf("max retries exceeded")
+}
+
+// calculateMaxTokens calculates appropriate max_tokens based on input size and model limits
+func (p *OpenRouterProvider) calculateMaxTokens(messages []types.Message, tools []types.Tool) int {
+	// Get model context limit
+	contextLimit, err := p.GetModelContextLimit()
+	if err != nil || contextLimit == 0 {
+		contextLimit = 32000 // Conservative default
+	}
+	
+	// Rough estimation: 1 token ≈ 4 characters
+	inputTokens := 0
+	
+	// Estimate tokens from messages
+	for _, msg := range messages {
+		inputTokens += len(msg.Content) / 4
+	}
+	
+	// Estimate tokens from tools (tools descriptions can be large)
+	inputTokens += len(tools) * 200 // Rough estimate per tool
+	
+	// Reserve buffer for safety and leave room for response
+	maxOutput := contextLimit - inputTokens - 1000 // 1000 token safety buffer
+	
+	// Ensure reasonable bounds
+	if maxOutput > 16000 {
+		maxOutput = 16000 // Cap at 16K for most responses
+	} else if maxOutput < 1000 {
+		maxOutput = 1000 // Minimum useful response size
+	}
+	
+	return maxOutput
 }
 
 // calculateBackoffDelay calculates the delay for exponential backoff

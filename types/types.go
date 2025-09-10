@@ -61,6 +61,18 @@ type ChatResponse struct {
 	Usage   Usage    `json:"usage"`
 }
 
+// ModelInfo represents information about a model
+type ModelInfo struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	Provider      string  `json:"provider"`
+	Description   string  `json:"description,omitempty"`
+	ContextLength int     `json:"context_length,omitempty"`
+	InputCost     float64 `json:"input_cost,omitempty"`
+	OutputCost    float64 `json:"output_cost,omitempty"`
+	Cost          float64 `json:"cost,omitempty"`
+}
+
 // ProviderInterface defines the interface that all providers must implement
 type ProviderInterface interface {
 	SendChatRequest(messages []Message, tools []Tool, reasoning string) (*ChatResponse, error)
@@ -70,4 +82,5 @@ type ProviderInterface interface {
 	GetModel() string
 	GetProvider() string
 	GetModelContextLimit() (int, error)
+	ListModels() ([]ModelInfo, error)
 }

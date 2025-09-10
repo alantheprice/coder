@@ -53,6 +53,13 @@ func (co *ConversationOptimizer) OptimizeConversation(messages []api.Message) []
 		return messages
 	}
 
+	// First pass: find the most recent read of each file
+	for i, msg := range messages {
+		co.trackFileRead(msg, i)
+		co.trackShellCommand(msg, i)
+	}
+
+	// Second pass: optimize based on tracked data
 	optimized := make([]api.Message, 0, len(messages))
 	
 	for i, msg := range messages {
@@ -78,9 +85,6 @@ func (co *ConversationOptimizer) OptimizeConversation(messages []api.Message) []
 			}
 		} else {
 			optimized = append(optimized, msg)
-			// Track file reads and shell commands for future optimization
-			co.trackFileRead(msg, i)
-			co.trackShellCommand(msg, i)
 		}
 	}
 
@@ -103,14 +107,18 @@ func (co *ConversationOptimizer) isRedundantFileRead(msg api.Message, index int)
 		return false
 	}
 
-	// Check if we have a previous read of this file
+	// Check if we have the most recent read of this file
 	if record, exists := co.fileReads[filePath]; exists {
 		// Extract current content
 		currentContent := co.extractFileContent(msg.Content)
 		currentHash := co.hashContent(currentContent)
 		
-		// If content hasn't changed and this isn't the most recent read, it's redundant
-		if record.ContentHash == currentHash && record.MessageIndex < index {
+		// Only consider it redundant if:
+		// 1. Content hasn't changed AND
+		// 2. This is NOT the most recent read (index < record.MessageIndex) AND
+		// 3. The gap to the most recent read is at least 5 messages
+		messageGap := record.MessageIndex - index
+		if record.ContentHash == currentHash && index < record.MessageIndex && messageGap >= 5 {
 			return true
 		}
 	}
@@ -132,6 +140,8 @@ func (co *ConversationOptimizer) trackFileRead(msg api.Message, index int) {
 	content := co.extractFileContent(msg.Content)
 	hash := co.hashContent(content)
 
+	// Always track the MOST RECENT read of each file
+	// This ensures we preserve the latest read and optimize older ones
 	co.fileReads[filePath] = &FileReadRecord{
 		FilePath:     filePath,
 		Content:      content,
@@ -376,7 +386,7 @@ func (co *ConversationOptimizer) AggressiveOptimization(messages []api.Message) 
 	}
 	
 	// For middle messages, apply aggressive summarization
-	recentThreshold := len(messages) - 5
+	recentThreshold := len(messages) - 5  // Keep last 5 messages intact
 	if recentThreshold < 2 {
 		recentThreshold = 2
 	}
@@ -384,8 +394,16 @@ func (co *ConversationOptimizer) AggressiveOptimization(messages []api.Message) 
 	for i := 2; i < recentThreshold; i++ {
 		msg := messages[i]
 		
-		// Summarize tool results more aggressively
-		if msg.Role == "user" && strings.Contains(msg.Content, "Tool call result") {
+		// Only summarize file reads that are old (more than 8 messages ago)
+		messageAge := len(messages) - i
+		if msg.Role == "user" && strings.Contains(msg.Content, "Tool call result for read_file:") && messageAge > 8 {
+			summary := co.createAggressiveSummary(msg)
+			optimized = append(optimized, api.Message{
+				Role:    msg.Role,
+				Content: summary,
+			})
+		} else if msg.Role == "user" && strings.Contains(msg.Content, "Tool call result for shell_command:") {
+			// Still summarize shell commands aggressively as they're less critical for context
 			summary := co.createAggressiveSummary(msg)
 			optimized = append(optimized, api.Message{
 				Role:    msg.Role,
@@ -394,8 +412,8 @@ func (co *ConversationOptimizer) AggressiveOptimization(messages []api.Message) 
 		} else {
 			// Keep non-tool messages but truncate if very long
 			content := msg.Content
-			if len(content) > 500 {
-				content = content[:500] + "... [TRUNCATED for context limit]"
+			if len(content) > 800 {  // Moderate truncation to balance context and size
+				content = content[:800] + "... [TRUNCATED for context limit]"
 			}
 			optimized = append(optimized, api.Message{
 				Role:    msg.Role,

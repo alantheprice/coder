@@ -23,6 +23,7 @@ type TaskAction struct {
 type AgentState struct {
 	Messages        []api.Message `json:"messages"`
 	PreviousSummary string        `json:"previous_summary"`
+	CompactSummary  string        `json:"compact_summary"`  // New: 5K limit summary for continuity
 	TaskActions     []TaskAction  `json:"task_actions"`
 	SessionID       string        `json:"session_id"`
 }
@@ -89,7 +90,7 @@ func (a *Agent) ToolLog(action, target string) {
 	}
 }
 
-// ShowColoredDiff displays a colored diff between old and new content (limited to first 50 lines)
+// ShowColoredDiff displays a colored diff between old and new content, focusing on actual changes
 func (a *Agent) ShowColoredDiff(oldContent, newContent string, maxLines int) {
 	const red = "\033[31m"    // Red for deletions
 	const green = "\033[32m"  // Green for additions
@@ -98,49 +99,134 @@ func (a *Agent) ShowColoredDiff(oldContent, newContent string, maxLines int) {
 	oldLines := strings.Split(oldContent, "\n")
 	newLines := strings.Split(newContent, "\n")
 	
-	// Simple line-by-line diff (not a full LCS implementation)
-	maxOld := len(oldLines)
-	maxNew := len(newLines)
-	lineCount := 0
+	// Find the actual changes by identifying differing regions
+	changes := a.findChanges(oldLines, newLines)
 	
-	fmt.Println("Diff preview (first 50 lines):")
+	if len(changes) == 0 {
+		fmt.Println("No changes detected")
+		return
+	}
+	
+	fmt.Printf("Diff preview (%d changes, up to %d lines):\n", len(changes), maxLines)
 	fmt.Println("----------------------------------------")
 	
-	i, j := 0, 0
-	for i < maxOld && j < maxNew && lineCount < maxLines {
-		if oldLines[i] == newLines[j] {
-			// Lines are the same, show context
+	linesShown := 0
+	
+	for _, change := range changes {
+		if linesShown >= maxLines {
+			fmt.Printf("... (diff truncated at %d lines)\n", maxLines)
+			break
+		}
+		
+		// Show some context before the change
+		contextStart := change.OldStart - 2
+		if contextStart < 0 {
+			contextStart = 0
+		}
+		
+		// Show context lines
+		for i := contextStart; i < change.OldStart && i < len(oldLines) && linesShown < maxLines; i++ {
 			fmt.Printf("  %s\n", oldLines[i])
-			i++
-			j++
-		} else {
-			// Lines differ, show deletion and addition
+			linesShown++
+		}
+		
+		// Show deletions
+		for i := change.OldStart; i < change.OldStart+change.OldLength && i < len(oldLines) && linesShown < maxLines; i++ {
 			fmt.Printf("%s- %s%s\n", red, oldLines[i], reset)
-			fmt.Printf("%s+ %s%s\n", green, newLines[j], reset)
+			linesShown++
+		}
+		
+		// Show additions  
+		for i := change.NewStart; i < change.NewStart+change.NewLength && i < len(newLines) && linesShown < maxLines; i++ {
+			fmt.Printf("%s+ %s%s\n", green, newLines[i], reset)
+			linesShown++
+		}
+		
+		if linesShown >= maxLines {
+			break
+		}
+	}
+	
+	fmt.Println("----------------------------------------")
+}
+
+// DiffChange represents a change region in the diff
+type DiffChange struct {
+	OldStart  int
+	OldLength int
+	NewStart  int
+	NewLength int
+}
+
+// findChanges identifies regions where content differs between old and new versions
+func (a *Agent) findChanges(oldLines, newLines []string) []DiffChange {
+	var changes []DiffChange
+	
+	oldLen := len(oldLines)
+	newLen := len(newLines)
+	
+	i, j := 0, 0
+	
+	for i < oldLen || j < newLen {
+		// Find the start of a difference
+		for i < oldLen && j < newLen && oldLines[i] == newLines[j] {
 			i++
 			j++
 		}
-		lineCount++
+		
+		if i >= oldLen && j >= newLen {
+			break // No more differences
+		}
+		
+		// Found a difference, find the end of it
+		changeOldStart := i
+		changeNewStart := j
+		
+		// Simple approach: advance both pointers until we find matching content again
+		oldEnd := i
+		newEnd := j
+		
+		// Look ahead to find where lines start matching again
+		matchFound := false
+		for !matchFound && (oldEnd < oldLen || newEnd < newLen) {
+			// Try to find a sequence of matching lines
+			if oldEnd < oldLen && newEnd < newLen {
+				// Check if next few lines match
+				lookAhead := 2
+				matches := 0
+				for k := 0; k < lookAhead && oldEnd+k < oldLen && newEnd+k < newLen; k++ {
+					if oldLines[oldEnd+k] == newLines[newEnd+k] {
+						matches++
+					}
+				}
+				if matches >= lookAhead || (matches > 0 && oldEnd+matches >= oldLen && newEnd+matches >= newLen) {
+					matchFound = true
+				}
+			}
+			
+			if !matchFound {
+				if oldEnd < oldLen {
+					oldEnd++
+				}
+				if newEnd < newLen {
+					newEnd++
+				}
+			}
+		}
+		
+		// Record the change
+		changes = append(changes, DiffChange{
+			OldStart:  changeOldStart,
+			OldLength: oldEnd - changeOldStart,
+			NewStart:  changeNewStart,
+			NewLength: newEnd - changeNewStart,
+		})
+		
+		i = oldEnd
+		j = newEnd
 	}
 	
-	// Show remaining deletions
-	for i < maxOld && lineCount < maxLines {
-		fmt.Printf("%s- %s%s\n", red, oldLines[i], reset)
-		i++
-		lineCount++
-	}
-	
-	// Show remaining additions
-	for j < maxNew && lineCount < maxLines {
-		fmt.Printf("%s+ %s%s\n", green, newLines[j], reset)
-		j++
-		lineCount++
-	}
-	
-	if lineCount >= maxLines && (i < maxOld || j < maxNew) {
-		fmt.Println("... (diff truncated)")
-	}
-	fmt.Println("----------------------------------------")
+	return changes
 }
 
 func NewAgent() (*Agent, error) {
@@ -159,12 +245,11 @@ func NewAgentWithModel(model string) (*Agent, error) {
 	var finalModel string
 	
 	if model != "" {
-		// User specified a model, use current best provider
-		clientType, _, err = configManager.GetBestProvider()
-		if err != nil {
-			return nil, fmt.Errorf("no available providers: %w", err)
-		}
 		finalModel = model
+		// When a model is specified, use the best available provider
+		// The provider should be explicitly set via command line --provider flag
+		// or via interactive /provider selection before this point
+		clientType, _, _ = configManager.GetBestProvider()
 	} else {
 		// Use configured provider and model
 		clientType, finalModel, err = configManager.GetBestProvider()
@@ -222,7 +307,47 @@ func NewAgentWithModel(model string) (*Agent, error) {
 	agent.currentContextTokens = 0
 	agent.contextWarningIssued = false
 	
+	// Load previous conversation summary for continuity
+	agent.loadPreviousSummary()
+	
 	return agent, nil
+}
+
+// loadPreviousSummary loads the previous conversation summary from the state file
+func (a *Agent) loadPreviousSummary() {
+	stateFile := ".coder_state.json"
+	
+	// Check if state file exists
+	if _, err := os.Stat(stateFile); err == nil {
+		// Load ONLY the summary, not the full conversation state
+		if err := a.LoadSummaryFromFile(stateFile); err == nil {
+			if a.debug {
+				a.debugLog("📁 Loaded previous conversation summary from %s\n", stateFile)
+			}
+		} else {
+			if a.debug {
+				a.debugLog("⚠️  Failed to load conversation summary: %v\n", err)
+			}
+		}
+	}
+}
+
+// SaveConversationSummary saves the conversation summary to the state file
+func (a *Agent) SaveConversationSummary() error {
+	// Generate summary before saving
+	_ = a.GenerateConversationSummary() // Generate summary to update state
+	
+	// Save state to file
+	stateFile := ".coder_state.json"
+	if err := a.SaveStateToFile(stateFile); err != nil {
+		return fmt.Errorf("failed to save conversation state: %v", err)
+	}
+	
+	if a.debug {
+		a.debugLog("💾 Saved conversation summary to %s\n", stateFile)
+	}
+	
+	return nil
 }
 
 
@@ -900,19 +1025,370 @@ func (a *Agent) GetModel() string {
 	return a.client.GetModel()
 }
 
+// GetMessages returns the current conversation messages
+func (a *Agent) GetMessages() []api.Message {
+	return a.messages
+}
+
 // SetModel changes the current model and persists the choice
 func (a *Agent) SetModel(model string) error {
-	// Update the client model
-	if err := a.client.SetModel(model); err != nil {
-		return fmt.Errorf("failed to set model on client: %w", err)
+	// Determine which provider this model belongs to
+	requiredProvider, err := a.determineProviderForModel(model)
+	if err != nil {
+		return fmt.Errorf("failed to determine provider for model %s: %w", model, err)
+	}
+	
+	// Check if we need to switch providers
+	if requiredProvider != a.clientType {
+		if a.debug {
+			a.debugLog("🔄 Switching from %s to %s for model %s\n", 
+				api.GetProviderName(a.clientType), api.GetProviderName(requiredProvider), model)
+		}
+		
+		// Create a new client with the required provider
+		newClient, err := api.NewUnifiedClientWithModel(requiredProvider, model)
+		if err != nil {
+			return fmt.Errorf("failed to create client for provider %s: %w", api.GetProviderName(requiredProvider), err)
+		}
+		
+		// Set debug mode on the new client
+		newClient.SetDebug(a.debug)
+		
+		// Check connection
+		if err := newClient.CheckConnection(); err != nil {
+			return fmt.Errorf("connection check failed for provider %s: %w", api.GetProviderName(requiredProvider), err)
+		}
+		
+		// Switch to the new client
+		a.client = newClient
+		a.clientType = requiredProvider
+	} else {
+		// Same provider, just update the model
+		if err := a.client.SetModel(model); err != nil {
+			return fmt.Errorf("failed to set model on client: %w", err)
+		}
 	}
 	
 	// Save to configuration
-	if err := a.configManager.SetProviderAndModel(a.clientType, model); err != nil {
+	if err := a.configManager.SetProviderAndModel(requiredProvider, model); err != nil {
 		return fmt.Errorf("failed to save model selection: %w", err)
 	}
 	
 	return nil
+}
+
+// determineProviderForModel determines which provider a model belongs to by checking all available models
+func (a *Agent) determineProviderForModel(modelID string) (api.ClientType, error) {
+	// Get all available models from all providers
+	allProviders := []api.ClientType{
+		api.OpenRouterClientType,  // Check OpenRouter first as it has most models
+		api.DeepInfraClientType,
+		api.CerebrasClientType,
+		api.GroqClientType,
+		api.DeepSeekClientType,
+		api.OllamaClientType,
+	}
+	
+	if a.debug {
+		a.debugLog("🔍 Determining provider for model: %s\n", modelID)
+	}
+	
+	for _, provider := range allProviders {
+		if a.debug {
+			a.debugLog("🔍 Checking provider: %s\n", api.GetProviderName(provider))
+		}
+		
+		// Check if this provider is available
+		if !a.isProviderAvailable(provider) {
+			if a.debug {
+				a.debugLog("❌ Provider %s not available\n", api.GetProviderName(provider))
+			}
+			continue
+		}
+		
+		if a.debug {
+			a.debugLog("✅ Provider %s is available, checking models\n", api.GetProviderName(provider))
+		}
+		
+		// Get models for this provider
+		models, err := a.getModelsForProvider(provider)
+		if err != nil {
+			if a.debug {
+				a.debugLog("❌ Failed to get models for %s: %v\n", api.GetProviderName(provider), err)
+			}
+			continue
+		}
+		
+		if a.debug {
+			a.debugLog("✅ Got %d models from %s\n", len(models), api.GetProviderName(provider))
+		}
+		
+		// Check if this provider has the model
+		for _, model := range models {
+			if model.ID == modelID {
+				if a.debug {
+					a.debugLog("🎉 Found model %s in provider %s\n", modelID, api.GetProviderName(provider))
+				}
+				return provider, nil
+			}
+		}
+		
+		if a.debug {
+			a.debugLog("❌ Model %s not found in provider %s\n", modelID, api.GetProviderName(provider))
+		}
+	}
+	
+	return "", fmt.Errorf("model %s not found in any available provider", modelID)
+}
+
+// getModelsForProvider gets models for a specific provider without environment manipulation
+func (a *Agent) getModelsForProvider(provider api.ClientType) ([]api.ModelInfo, error) {
+	// Check if provider is available first
+	if !a.isProviderAvailable(provider) {
+		return nil, fmt.Errorf("provider %s not available", api.GetProviderName(provider))
+	}
+	
+	// For each provider, directly call the appropriate function based on current environment
+	// This avoids the complexity of environment manipulation
+	switch provider {
+	case api.OpenRouterClientType:
+		if os.Getenv("OPENROUTER_API_KEY") != "" {
+			// Backup all other keys temporarily 
+			deepinfraKey := os.Getenv("DEEPINFRA_API_KEY")
+			cerebrasKey := os.Getenv("CEREBRAS_API_KEY")
+			groqKey := os.Getenv("GROQ_API_KEY")
+			deepseekKey := os.Getenv("DEEPSEEK_API_KEY")
+			
+			// Clear other keys temporarily
+			os.Unsetenv("DEEPINFRA_API_KEY")
+			os.Unsetenv("CEREBRAS_API_KEY")
+			os.Unsetenv("GROQ_API_KEY")
+			os.Unsetenv("DEEPSEEK_API_KEY")
+			
+			// Get OpenRouter models
+			models, err := api.GetAvailableModels()
+			
+			// Restore other keys
+			if deepinfraKey != "" {
+				os.Setenv("DEEPINFRA_API_KEY", deepinfraKey)
+			}
+			if cerebrasKey != "" {
+				os.Setenv("CEREBRAS_API_KEY", cerebrasKey)
+			}
+			if groqKey != "" {
+				os.Setenv("GROQ_API_KEY", groqKey)
+			}
+			if deepseekKey != "" {
+				os.Setenv("DEEPSEEK_API_KEY", deepseekKey)
+			}
+			
+			return models, err
+		}
+		return nil, fmt.Errorf("OPENROUTER_API_KEY not set")
+		
+	case api.DeepInfraClientType:
+		if os.Getenv("DEEPINFRA_API_KEY") != "" {
+			// Similar approach for DeepInfra
+			openrouterKey := os.Getenv("OPENROUTER_API_KEY")
+			cerebrasKey := os.Getenv("CEREBRAS_API_KEY")
+			groqKey := os.Getenv("GROQ_API_KEY")
+			deepseekKey := os.Getenv("DEEPSEEK_API_KEY")
+			
+			os.Unsetenv("OPENROUTER_API_KEY")
+			os.Unsetenv("CEREBRAS_API_KEY")
+			os.Unsetenv("GROQ_API_KEY")
+			os.Unsetenv("DEEPSEEK_API_KEY")
+			
+			models, err := api.GetAvailableModels()
+			
+			if openrouterKey != "" {
+				os.Setenv("OPENROUTER_API_KEY", openrouterKey)
+			}
+			if cerebrasKey != "" {
+				os.Setenv("CEREBRAS_API_KEY", cerebrasKey)
+			}
+			if groqKey != "" {
+				os.Setenv("GROQ_API_KEY", groqKey)
+			}
+			if deepseekKey != "" {
+				os.Setenv("DEEPSEEK_API_KEY", deepseekKey)
+			}
+			
+			return models, err
+		}
+		return nil, fmt.Errorf("DEEPINFRA_API_KEY not set")
+		
+	case api.CerebrasClientType:
+		if os.Getenv("CEREBRAS_API_KEY") != "" {
+			openrouterKey := os.Getenv("OPENROUTER_API_KEY")
+			deepinfraKey := os.Getenv("DEEPINFRA_API_KEY")
+			groqKey := os.Getenv("GROQ_API_KEY")
+			deepseekKey := os.Getenv("DEEPSEEK_API_KEY")
+			
+			os.Unsetenv("OPENROUTER_API_KEY")
+			os.Unsetenv("DEEPINFRA_API_KEY")
+			os.Unsetenv("GROQ_API_KEY")
+			os.Unsetenv("DEEPSEEK_API_KEY")
+			
+			models, err := api.GetAvailableModels()
+			
+			if openrouterKey != "" {
+				os.Setenv("OPENROUTER_API_KEY", openrouterKey)
+			}
+			if deepinfraKey != "" {
+				os.Setenv("DEEPINFRA_API_KEY", deepinfraKey)
+			}
+			if groqKey != "" {
+				os.Setenv("GROQ_API_KEY", groqKey)
+			}
+			if deepseekKey != "" {
+				os.Setenv("DEEPSEEK_API_KEY", deepseekKey)
+			}
+			
+			return models, err
+		}
+		return nil, fmt.Errorf("CEREBRAS_API_KEY not set")
+		
+	case api.GroqClientType:
+		if os.Getenv("GROQ_API_KEY") != "" {
+			openrouterKey := os.Getenv("OPENROUTER_API_KEY")
+			deepinfraKey := os.Getenv("DEEPINFRA_API_KEY")
+			cerebrasKey := os.Getenv("CEREBRAS_API_KEY")
+			deepseekKey := os.Getenv("DEEPSEEK_API_KEY")
+			
+			os.Unsetenv("OPENROUTER_API_KEY")
+			os.Unsetenv("DEEPINFRA_API_KEY")
+			os.Unsetenv("CEREBRAS_API_KEY")
+			os.Unsetenv("DEEPSEEK_API_KEY")
+			
+			models, err := api.GetAvailableModels()
+			
+			if openrouterKey != "" {
+				os.Setenv("OPENROUTER_API_KEY", openrouterKey)
+			}
+			if deepinfraKey != "" {
+				os.Setenv("DEEPINFRA_API_KEY", deepinfraKey)
+			}
+			if cerebrasKey != "" {
+				os.Setenv("CEREBRAS_API_KEY", cerebrasKey)
+			}
+			if deepseekKey != "" {
+				os.Setenv("DEEPSEEK_API_KEY", deepseekKey)
+			}
+			
+			return models, err
+		}
+		return nil, fmt.Errorf("GROQ_API_KEY not set")
+		
+	case api.DeepSeekClientType:
+		if os.Getenv("DEEPSEEK_API_KEY") != "" {
+			openrouterKey := os.Getenv("OPENROUTER_API_KEY")
+			deepinfraKey := os.Getenv("DEEPINFRA_API_KEY")
+			cerebrasKey := os.Getenv("CEREBRAS_API_KEY")
+			groqKey := os.Getenv("GROQ_API_KEY")
+			
+			os.Unsetenv("OPENROUTER_API_KEY")
+			os.Unsetenv("DEEPINFRA_API_KEY")
+			os.Unsetenv("CEREBRAS_API_KEY")
+			os.Unsetenv("GROQ_API_KEY")
+			
+			models, err := api.GetAvailableModels()
+			
+			if openrouterKey != "" {
+				os.Setenv("OPENROUTER_API_KEY", openrouterKey)
+			}
+			if deepinfraKey != "" {
+				os.Setenv("DEEPINFRA_API_KEY", deepinfraKey)
+			}
+			if cerebrasKey != "" {
+				os.Setenv("CEREBRAS_API_KEY", cerebrasKey)
+			}
+			if groqKey != "" {
+				os.Setenv("GROQ_API_KEY", groqKey)
+			}
+			
+			return models, err
+		}
+		return nil, fmt.Errorf("DEEPSEEK_API_KEY not set")
+		
+	case api.OllamaClientType:
+		// For Ollama, we need to clear API keys to ensure it's selected
+		openrouterKey := os.Getenv("OPENROUTER_API_KEY")
+		deepinfraKey := os.Getenv("DEEPINFRA_API_KEY")
+		cerebrasKey := os.Getenv("CEREBRAS_API_KEY")
+		groqKey := os.Getenv("GROQ_API_KEY")
+		deepseekKey := os.Getenv("DEEPSEEK_API_KEY")
+		
+		os.Unsetenv("OPENROUTER_API_KEY")
+		os.Unsetenv("DEEPINFRA_API_KEY")
+		os.Unsetenv("CEREBRAS_API_KEY")
+		os.Unsetenv("GROQ_API_KEY")
+		os.Unsetenv("DEEPSEEK_API_KEY")
+		
+		models, err := api.GetAvailableModels()
+		
+		if openrouterKey != "" {
+			os.Setenv("OPENROUTER_API_KEY", openrouterKey)
+		}
+		if deepinfraKey != "" {
+			os.Setenv("DEEPINFRA_API_KEY", deepinfraKey)
+		}
+		if cerebrasKey != "" {
+			os.Setenv("CEREBRAS_API_KEY", cerebrasKey)
+		}
+		if groqKey != "" {
+			os.Setenv("GROQ_API_KEY", groqKey)
+		}
+		if deepseekKey != "" {
+			os.Setenv("DEEPSEEK_API_KEY", deepseekKey)
+		}
+		
+		return models, err
+		
+	default:
+		return nil, fmt.Errorf("unknown provider type: %s", provider)
+	}
+}
+
+
+// isProviderAvailable checks if a provider is currently available
+func (a *Agent) isProviderAvailable(provider api.ClientType) bool {
+	// For Ollama, check if it's running
+	if provider == api.OllamaClientType {
+		client, err := api.NewUnifiedClient(api.OllamaClientType)
+		if err != nil {
+			return false
+		}
+		return client.CheckConnection() == nil
+	}
+	
+	// For other providers, check if API key is set
+	envVar := a.getProviderEnvVar(provider)
+	if envVar == "" {
+		return false
+	}
+	
+	return os.Getenv(envVar) != ""
+}
+
+// getProviderEnvVar returns the environment variable name for a provider
+func (a *Agent) getProviderEnvVar(provider api.ClientType) string {
+	switch provider {
+	case api.DeepInfraClientType:
+		return "DEEPINFRA_API_KEY"
+	case api.CerebrasClientType:
+		return "CEREBRAS_API_KEY"
+	case api.OpenRouterClientType:
+		return "OPENROUTER_API_KEY"
+	case api.GroqClientType:
+		return "GROQ_API_KEY"
+	case api.DeepSeekClientType:
+		return "DEEPSEEK_API_KEY"
+	case api.OllamaClientType:
+		return "" // Ollama doesn't use an API key
+	default:
+		return ""
+	}
 }
 
 // GetProvider returns the current provider name
@@ -1135,8 +1611,46 @@ func (a *Agent) calculateCachedCost(cachedTokens int) float64 {
 	costPerToken := 0.0
 	model := a.GetModel()
 	
-	// Get input token pricing based on model
-	if strings.Contains(model, "gpt-oss") {
+	// Get input token pricing based on model and provider
+	provider := a.GetProvider()
+	
+	// OpenRouter-specific pricing (updated January 2025)
+	if provider == "openrouter" {
+		if strings.Contains(model, "deepseek-chat") || strings.Contains(model, "deepseek-r1") {
+			// DeepSeek models on OpenRouter: ~$0.55 per million input tokens
+			costPerToken = 0.55 / 1000000
+		} else if strings.Contains(model, "gpt-4o") {
+			// GPT-4o on OpenRouter: $2.50 per million input tokens
+			costPerToken = 2.50 / 1000000
+		} else if strings.Contains(model, "gpt-4") {
+			// GPT-4 on OpenRouter: $30 per million input tokens
+			costPerToken = 30.0 / 1000000
+		} else if strings.Contains(model, "claude-3.5-sonnet") {
+			// Claude 3.5 Sonnet: $3.00 per million input tokens
+			costPerToken = 3.00 / 1000000
+		} else if strings.Contains(model, "claude-3-opus") {
+			// Claude 3 Opus: $15.00 per million input tokens
+			costPerToken = 15.0 / 1000000
+		} else if strings.Contains(model, "claude-3-sonnet") {
+			// Claude 3 Sonnet: $3.00 per million input tokens
+			costPerToken = 3.00 / 1000000
+		} else if strings.Contains(model, "claude-3-haiku") {
+			// Claude 3 Haiku: $0.25 per million input tokens
+			costPerToken = 0.25 / 1000000
+		} else if strings.Contains(model, "llama-3.1-405b") {
+			// Llama 3.1 405B: ~$5.00 per million input tokens
+			costPerToken = 5.0 / 1000000
+		} else if strings.Contains(model, "llama-3.1-70b") {
+			// Llama 3.1 70B: ~$0.88 per million input tokens
+			costPerToken = 0.88 / 1000000
+		} else if strings.Contains(model, "llama-3.1-8b") {
+			// Llama 3.1 8B: ~$0.18 per million input tokens
+			costPerToken = 0.18 / 1000000
+		} else {
+			// Default OpenRouter pricing (use DeepSeek rate as conservative estimate)
+			costPerToken = 0.55 / 1000000
+		}
+	} else if strings.Contains(model, "gpt-oss") {
 		// GPT-OSS pricing: $0.30 per million input tokens
 		costPerToken = 0.30 / 1000000
 	} else if strings.Contains(model, "qwen3-coder") {
@@ -1146,8 +1660,8 @@ func (a *Agent) calculateCachedCost(cachedTokens int) float64 {
 		// Llama pricing: $0.36 per million tokens
 		costPerToken = 0.36 / 1000000
 	} else {
-		// Default pricing (use GPT-OSS input rate)
-		costPerToken = 0.30 / 1000000
+		// Default pricing (conservative estimate)
+		costPerToken = 1.0 / 1000000
 	}
 	
 	costSavings := float64(cachedTokens) * costPerToken
@@ -1193,11 +1707,15 @@ func (a *Agent) GetOptimizationStats() map[string]interface{} {
 
 // ExportState exports the current agent state for persistence
 func (a *Agent) ExportState() ([]byte, error) {
+	// Generate compact summary for next session continuity
+	compactSummary := a.GenerateCompactSummary()
+	
 	state := AgentState{
-		Messages:       a.messages,
+		Messages:        a.messages,
 		PreviousSummary: a.previousSummary,
-		TaskActions:    a.taskActions,
-		SessionID:      a.sessionID,
+		CompactSummary:  compactSummary,  // Store 5K-limited summary for continuity
+		TaskActions:     a.taskActions,
+		SessionID:       a.sessionID,
 	}
 	return json.Marshal(state)
 }
@@ -1233,6 +1751,37 @@ func (a *Agent) LoadStateFromFile(filename string) error {
 	return a.ImportState(data)
 }
 
+// LoadSummaryFromFile loads ONLY the compact summary from a state file for minimal continuity
+func (a *Agent) LoadSummaryFromFile(filename string) error {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	
+	var state AgentState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+	
+	// Only load the compact summary, not the full conversation state
+	if state.CompactSummary != "" {
+		a.previousSummary = state.CompactSummary
+		if a.debug {
+			a.debugLog("📄 Loaded compact summary (%d chars)\n", len(state.CompactSummary))
+		}
+	} else if state.PreviousSummary != "" {
+		// Fallback to legacy summary if compact summary not available
+		a.previousSummary = state.PreviousSummary
+		if a.debug {
+			a.debugLog("📄 Loaded legacy summary (%d chars)\n", len(state.PreviousSummary))
+		}
+	}
+	
+	return nil
+}
+
+
+
 // GenerateActionSummary creates a summary of completed actions for continuity
 func (a *Agent) GenerateActionSummary() string {
 	if len(a.taskActions) == 0 {
@@ -1251,6 +1800,175 @@ func (a *Agent) GenerateActionSummary() string {
 	}
 	
 	return summary.String()
+}
+
+// GenerateConversationSummary creates a comprehensive summary of the conversation including todos
+func (a *Agent) GenerateConversationSummary() string {
+	var summary strings.Builder
+	
+	// Add conversation metrics
+	summary.WriteString("📊 CONVERSATION SUMMARY\n")
+	summary.WriteString("══════════════════════════════\n\n")
+	
+	// Add task actions summary
+	if len(a.taskActions) > 0 {
+		summary.WriteString("🎯 COMPLETED ACTIONS:\n")
+		summary.WriteString("──────────────────────────────\n")
+		
+		// Group actions by type
+		actionCounts := make(map[string]int)
+		for _, action := range a.taskActions {
+			actionCounts[action.Type]++
+		}
+		
+		for actionType, count := range actionCounts {
+			summary.WriteString(fmt.Sprintf("• %s: %d actions\n", actionType, count))
+		}
+		summary.WriteString("\n")
+	}
+	
+	// Add todo summary
+	todoSummary := tools.GetTaskSummary()
+	if todoSummary != "No tasks tracked in this session." {
+		summary.WriteString("📋 TASK PROGRESS:\n")
+		summary.WriteString("──────────────────────────────\n")
+		summary.WriteString(todoSummary)
+		summary.WriteString("\n")
+	}
+	
+	// Add key files explored
+	stats := a.optimizer.GetOptimizationStats()
+	if trackedFiles, ok := stats["file_paths"].([]string); ok && len(trackedFiles) > 0 {
+		summary.WriteString("📂 KEY FILES EXPLORED:\n")
+		summary.WriteString("──────────────────────────────\n")
+		for _, file := range trackedFiles {
+			summary.WriteString(fmt.Sprintf("• %s\n", file))
+		}
+		summary.WriteString("\n")
+	}
+	
+	// Add conversation metrics
+	summary.WriteString("📈 CONVERSATION METRICS:\n")
+	summary.WriteString("──────────────────────────────\n")
+	summary.WriteString(fmt.Sprintf("• Iterations: %d\n", a.currentIteration))
+	summary.WriteString(fmt.Sprintf("• Total cost: $%.6f\n", a.totalCost))
+	summary.WriteString(fmt.Sprintf("• Total tokens: %s\n", a.formatTokenCount(a.totalTokens)))
+	
+	if a.cachedTokens > 0 {
+		efficiency := float64(a.cachedTokens)/float64(a.totalTokens)*100
+		summary.WriteString(fmt.Sprintf("• Efficiency: %.1f%% tokens cached\n", efficiency))
+	}
+	
+	summary.WriteString("══════════════════════════════\n")
+	
+	return summary.String()
+}
+
+// GenerateCompactSummary creates a compact summary for session continuity (max 5K context)
+func (a *Agent) GenerateCompactSummary() string {
+	var summary strings.Builder
+	
+	// Start with a session continuity header
+	summary.WriteString("🔄 PREVIOUS SESSION CONTEXT\n")
+	summary.WriteString("════════════════════════════\n\n")
+	
+	// Add accomplished todos with context
+	todoSummary := tools.GetTaskSummary()
+	if todoSummary != "No tasks tracked in this session." {
+		summary.WriteString("✅ ACCOMPLISHED TASKS:\n")
+		summary.WriteString("─────────────────────────────\n")
+		
+		// Get completed tasks with more detail
+		completedTasks := tools.GetCompletedTasks()
+		if len(completedTasks) > 0 {
+			for i, task := range completedTasks {
+				if i >= 8 { // Limit to 8 tasks to control size
+					summary.WriteString("  ... and more\n")
+					break
+				}
+				summary.WriteString(fmt.Sprintf("• %s\n", task))
+			}
+		} else {
+			// Fallback to basic summary if detailed tasks not available
+			lines := strings.Split(todoSummary, "\n")
+			for _, line := range lines {
+				if strings.Contains(line, "completed") || strings.Contains(line, "✅") {
+					summary.WriteString(fmt.Sprintf("• %s\n", strings.TrimSpace(line)))
+				}
+			}
+		}
+		summary.WriteString("\n")
+	}
+	
+	// Add key technical changes (limited and focused)
+	if len(a.taskActions) > 0 {
+		summary.WriteString("🔧 KEY TECHNICAL CHANGES:\n")
+		summary.WriteString("─────────────────────────────\n")
+		
+		// Focus on the most important actions, limit to save space
+		importantActions := []string{}
+		for _, action := range a.taskActions {
+			if action.Type == "file_modified" || action.Type == "file_created" {
+				importantActions = append(importantActions, 
+					fmt.Sprintf("• %s: %s", action.Type, action.Description))
+			}
+		}
+		
+		// Limit to most recent 6 actions
+		start := 0
+		if len(importantActions) > 6 {
+			start = len(importantActions) - 6
+			summary.WriteString("  [Recent changes shown]\n")
+		}
+		
+		for i := start; i < len(importantActions); i++ {
+			summary.WriteString(importantActions[i] + "\n")
+		}
+		summary.WriteString("\n")
+	}
+	
+	// Add key files touched (limited list)
+	stats := a.optimizer.GetOptimizationStats()
+	if trackedFiles, ok := stats["file_paths"].([]string); ok && len(trackedFiles) > 0 {
+		summary.WriteString("📄 KEY FILES:\n")
+		summary.WriteString("─────────────────────────────\n")
+		
+		// Limit to 8 files to control summary size
+		count := len(trackedFiles)
+		if count > 8 {
+			count = 8
+		}
+		
+		for i := 0; i < count; i++ {
+			summary.WriteString(fmt.Sprintf("• %s\n", trackedFiles[i]))
+		}
+		
+		if len(trackedFiles) > 8 {
+			summary.WriteString(fmt.Sprintf("  ... and %d more files\n", len(trackedFiles)-8))
+		}
+		summary.WriteString("\n")
+	}
+	
+	// Add concise session metrics
+	summary.WriteString("📊 SESSION METRICS:\n")
+	summary.WriteString("─────────────────────────────\n")
+	summary.WriteString(fmt.Sprintf("• Cost: $%.4f", a.totalCost))
+	if a.cachedTokens > 0 {
+		efficiency := float64(a.cachedTokens)/float64(a.totalTokens)*100
+		summary.WriteString(fmt.Sprintf(" (%.0f%% cached)", efficiency))
+	}
+	summary.WriteString("\n")
+	
+	summary.WriteString("════════════════════════════\n")
+	
+	// Ensure summary is under 5K characters
+	result := summary.String()
+	if len(result) > 5000 {
+		// Truncate and add indicator
+		result = result[:4950] + "...\n[Summary truncated to 5K limit]\n════════════════════════════\n"
+	}
+	
+	return result
 }
 
 // AddTaskAction records a completed task action for continuity

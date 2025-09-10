@@ -204,16 +204,15 @@ func (p *ProviderCommand) switchToProvider(provider api.ClientType, configManage
 	
 	fmt.Printf("🔄 Switching to %s with model %s...\n", api.GetProviderName(provider), model)
 	
-	// Save the selection
-	if err := configManager.SetProviderAndModel(provider, model); err != nil {
-		return fmt.Errorf("failed to save provider selection: %w", err)
+	// Switch the agent to use the new provider and model immediately
+	err := chatAgent.SetModel(model)
+	if err != nil {
+		return fmt.Errorf("failed to switch to provider %s: %w", api.GetProviderName(provider), err)
 	}
 
 	fmt.Printf("✅ Provider switched to: %s\n", api.GetProviderName(provider))
 	fmt.Printf("🤖 Using model: %s\n", model)
-	fmt.Println()
-	fmt.Println("⚠️  Note: This change will take effect in the next session.")
-	fmt.Println("For immediate effect, restart the application or use the /models command to change the model.")
+	fmt.Printf("🟢 Change is active immediately!\n")
 
 	return nil
 }
