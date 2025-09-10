@@ -109,6 +109,11 @@ func NewClientWithModel(model string) (*Client, error) {
 		return nil, fmt.Errorf("DEEPINFRA_API_KEY environment variable not set")
 	}
 
+	// Use default model if none specified
+	if model == "" {
+		model = DefaultModel
+	}
+
 	return &Client{
 		httpClient: &http.Client{
 			Timeout: 300 * time.Second, // Increased from 120s to 300s for complex reasoning tasks

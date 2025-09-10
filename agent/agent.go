@@ -43,6 +43,7 @@ type Agent struct {
 	cachedCostSavings float64      // Track cost savings from cached tokens
 	previousSummary   string       // Summary of previous actions for continuity
 	sessionID        string       // Unique session identifier
+	optimizer        *ConversationOptimizer // Conversation optimization
 }
 
 // debugLog logs a message only if debug mode is enabled
@@ -126,11 +127,13 @@ func NewAgent() (*Agent, error) {
 }
 
 func NewAgentWithModel(model string) (*Agent, error) {
-	// Determine which client to use
-	clientType := api.GetClientTypeFromEnv()
+	// Determine which client to use with fallback
+	clientType, err := api.GetClientTypeWithFallback()
+	if err != nil {
+		return nil, fmt.Errorf("no available providers: %w", err)
+	}
 
 	var client api.ClientInterface
-	var err error
 	if model != "" {
 		client, err = api.NewUnifiedClientWithModel(clientType, model)
 	} else {
@@ -157,6 +160,9 @@ func NewAgentWithModel(model string) (*Agent, error) {
 	// Clear old todos at session start
 	tools.ClearTodos()
 
+	// Check if conversation optimization is enabled
+	optimizationEnabled := os.Getenv("CONVERSATION_OPTIMIZATION") == "true" || os.Getenv("CONVERSATION_OPTIMIZATION") == "1"
+
 	return &Agent{
 		client:        client,
 		messages:      []api.Message{},
@@ -165,6 +171,7 @@ func NewAgentWithModel(model string) (*Agent, error) {
 		totalCost:     0.0,
 		clientType:    clientType,
 		debug:         debug,
+		optimizer:     NewConversationOptimizer(optimizationEnabled, debug),
 	}, nil
 }
 
@@ -205,8 +212,17 @@ func (a *Agent) ProcessQuery(userQuery string) (string, error) {
 
 		a.debugLog("Iteration %d/%d\n", a.currentIteration, a.maxIterations)
 
+		// Optimize conversation before sending to API
+		optimizedMessages := a.optimizer.OptimizeConversation(a.messages)
+		
+		if a.debug && len(optimizedMessages) < len(a.messages) {
+			saved := len(a.messages) - len(optimizedMessages)
+			a.debugLog("🔄 Conversation optimized: %d messages → %d messages (saved %d)\n", 
+				len(a.messages), len(optimizedMessages), saved)
+		}
+
 		// Send request to API using the unified interface
-		resp, err := a.client.SendChatRequest(a.messages, api.GetToolDefinitions(), "high")
+		resp, err := a.client.SendChatRequest(optimizedMessages, api.GetToolDefinitions(), "high")
 		if err != nil {
 			return "", fmt.Errorf("API request failed: %w", err)
 		}
@@ -748,6 +764,23 @@ func (a *Agent) PrintConversationSummary() {
 		fmt.Printf("📋 Cost per iteration: $%.6f\n", costPerIteration)
 	}
 	
+	// Show optimization stats if enabled
+	if a.optimizer.IsEnabled() {
+		stats := a.optimizer.GetOptimizationStats()
+		fmt.Println()
+		fmt.Println("🔄 Conversation Optimization")
+		fmt.Println("──────────────────────────────")
+		fmt.Printf("📁 Files tracked:     %d\n", stats["tracked_files"])
+		if trackedFiles, ok := stats["file_paths"].([]string); ok && len(trackedFiles) > 0 {
+			if len(trackedFiles) <= 3 {
+				fmt.Printf("📂 Tracked files:     %s\n", strings.Join(trackedFiles, ", "))
+			} else {
+				fmt.Printf("📂 Tracked files:     %s, +%d more\n", 
+					strings.Join(trackedFiles[:2], ", "), len(trackedFiles)-2)
+			}
+		}
+	}
+	
 	fmt.Println("══════════════════════════════")
 	fmt.Println()
 }
@@ -1004,6 +1037,24 @@ func (a *Agent) ClearConversationHistory() {
 	a.messages = []api.Message{}
 	a.previousSummary = ""
 	a.taskActions = []TaskAction{}
+	a.optimizer.Reset()
+}
+
+// SetConversationOptimization enables or disables conversation optimization
+func (a *Agent) SetConversationOptimization(enabled bool) {
+	a.optimizer.SetEnabled(enabled)
+	if a.debug {
+		if enabled {
+			a.debugLog("🔄 Conversation optimization enabled\n")
+		} else {
+			a.debugLog("🔄 Conversation optimization disabled\n")
+		}
+	}
+}
+
+// GetOptimizationStats returns conversation optimization statistics
+func (a *Agent) GetOptimizationStats() map[string]interface{} {
+	return a.optimizer.GetOptimizationStats()
 }
 
 // ExportState exports the current agent state for persistence

@@ -28,13 +28,19 @@ const (
 	DeepSeekClientType  ClientType = "deepseek"
 )
 
-// NewUnifiedClient creates a client based on the specified type
+// NewUnifiedClient creates a client with default model for the provider
 func NewUnifiedClient(clientType ClientType) (ClientInterface, error) {
-	return NewUnifiedClientWithModel(clientType, "")
+	defaultModel := GetDefaultModelForProvider(clientType)
+	return NewUnifiedClientWithModel(clientType, defaultModel)
 }
 
 // NewUnifiedClientWithModel creates a client with a specific model
 func NewUnifiedClientWithModel(clientType ClientType, model string) (ClientInterface, error) {
+	// Use default model if none specified
+	if model == "" {
+		model = GetDefaultModelForProvider(clientType)
+	}
+	
 	switch clientType {
 	case DeepInfraClientType:
 		return NewDeepInfraClientWrapper(model)
@@ -108,6 +114,70 @@ func GetClientTypeFromEnv() ClientType {
 
 	// Otherwise, default to Ollama for local inference
 	return OllamaClientType
+}
+
+// GetDefaultModelForProvider returns the best default model for each provider
+func GetDefaultModelForProvider(clientType ClientType) string {
+	switch clientType {
+	case DeepInfraClientType:
+		return "deepseek-ai/DeepSeek-V3.1"
+	case OllamaClientType:
+		return "gpt-oss:20b"
+	case CerebrasClientType:
+		return "cerebras/btlm-3b-8k-base"
+	case OpenRouterClientType:
+		return "anthropic/claude-3.5-sonnet"
+	case GroqClientType:
+		return "llama3-70b-8192"
+	case DeepSeekClientType:
+		return "deepseek-chat"
+	default:
+		return "deepseek-ai/DeepSeek-V3.1"
+	}
+}
+
+// GetClientTypeWithFallback determines client type and falls back if unavailable
+func GetClientTypeWithFallback() (ClientType, error) {
+	// Try primary selection
+	primaryType := GetClientTypeFromEnv()
+	
+	// For non-Ollama providers, verify API key exists
+	if primaryType != OllamaClientType {
+		if _, err := NewUnifiedClient(primaryType); err == nil {
+			return primaryType, nil
+		}
+		// If primary fails, fall back to Ollama
+		fmt.Printf("⚠️  Primary provider %s unavailable, falling back to Ollama\n", GetProviderName(primaryType))
+		return OllamaClientType, nil
+	}
+	
+	// If Ollama was selected, check if it's running
+	if _, err := NewUnifiedClient(OllamaClientType); err == nil {
+		return OllamaClientType, nil
+	}
+	
+	// Ollama not available, try other providers as fallback
+	envProviders := []struct {
+		envVar string
+		client ClientType
+	}{
+		{"DEEPINFRA_API_KEY", DeepInfraClientType},
+		{"CEREBRAS_API_KEY", CerebrasClientType},
+		{"OPENROUTER_API_KEY", OpenRouterClientType},
+		{"GROQ_API_KEY", GroqClientType},
+		{"DEEPSEEK_API_KEY", DeepSeekClientType},
+	}
+
+	for _, provider := range envProviders {
+		if apiKey := os.Getenv(provider.envVar); apiKey != "" {
+			if _, err := NewUnifiedClient(provider.client); err == nil {
+				fmt.Printf("⚠️  Ollama unavailable, using %s as fallback\n", GetProviderName(provider.client))
+				return provider.client, nil
+			}
+		}
+	}
+	
+	return "", fmt.Errorf("no available providers found. Please set up either Ollama or a provider API key")
 }
 
 // GetAvailableProviders returns a list of all available providers
