@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -14,7 +15,12 @@ func ExecuteShellCommand(command string) (string, error) {
 	}
 
 	// Create command with timeout
-	cmd := exec.Command("bash", "-c", command)
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	fmt.Printf("Executing command: %s, with shell: %s\n", command, shell)
+	cmd := exec.Command(shell, "-c", command)
 
 	// Set up timeout
 	timeout := 60 * time.Second // Increased from 30s to 60s for longer operations
