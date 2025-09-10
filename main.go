@@ -77,7 +77,7 @@ func main() {
 		log.Fatalf("Failed to initialize agent: %v", err)
 	}
 
-	debugLog(debug, "🤖 GPT-OSS Chat Agent initialized successfully!\n")
+	debugLog(debug, "🤖 Coder initialized successfully!\n")
 
 	// Initialize command registry for slash commands
 	cmdRegistry := commands.NewCommandRegistry()
@@ -330,9 +330,9 @@ func validateQueryLength(query string) bool {
 
 func printHelp() {
 	fmt.Println(`
-🤖 GPT-OSS Chat Agent
+🤖 Coding agent
 
-A command-line coding assistant using OpenAI's gpt-oss-120b model with 4 core tools:
+A command-line coding assistant using different providers with 4 core tools:
 - shell_command: Execute shell commands for exploration and testing  
 - read_file: Read file contents
 - write_file: Create new files
@@ -342,7 +342,7 @@ USAGE:
   Interactive mode:     ./coder
   Non-interactive:      ./coder "your query here"
   Local inference:      ./coder --local "your query"
-  Custom model:         ./coder --provider=deepinfra --model=meta-llama/Meta-Llama-3.1-70B-Instruct "your query"
+  Custom model:         ./coder --provider=deepinfra --model=deepseek-ai/ "your query"
   Custom provider:      ./coder --provider=ollama "your query"
   Piped input:         echo "your query" | ./coder
   Help:                ./coder --help

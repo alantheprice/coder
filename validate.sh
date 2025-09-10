@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🔍 Validating GPT-OSS Chat Agent Implementation"
+echo "🔍 Validating Coder Agent Implementation"
 echo "=============================================="
 
 # Check Go installation
@@ -58,7 +58,7 @@ fi
 # Check API client initialization  
 echo ""
 echo "🌐 Testing API client initialization..."
-if echo "test" | timeout 3 ./gpt-chat 2>&1 | grep -q "GPT-OSS Chat Agent initialized successfully"; then
+if echo "test" | timeout 3 ./gpt-chat 2>&1 | grep -q "Coder Agent initialized successfully"; then
     echo "✅ API client initializes correctly"
 else
     echo "❌ API client initialization failed"

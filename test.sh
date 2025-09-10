@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🔍 Validating GPT-OSS Chat Agent Implementation"
+echo "🔍 Validating Coder Agent Implementation"
 echo "=============================================="
 
 

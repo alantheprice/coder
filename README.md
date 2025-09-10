@@ -1,6 +1,6 @@
-# GPT-OSS Chat Agent
+# Coder - Autonomous Coding Assistant
 
-A sophisticated command-line coding assistant that provides autonomous programming capabilities using multiple AI models. The agent uses systematic exploration and provides 7 core tools for comprehensive code development, testing, and project management.
+A command-line coding assistant written in Go that uses OpenAI's gpt-oss-120b model (via DeepInfra) or local gpt-oss:20b (via Ollama). The agent operates autonomously with core tools and follows systematic exploration patterns.
 
 ## Features
 
@@ -48,8 +48,8 @@ A sophisticated command-line coding assistant that provides autonomous programmi
 ### Quick Setup
 ```bash
 # Clone repository
-git clone https://github.com/your-org/gpt-oss-chat-agent.git
-cd gpt-oss-chat-agent
+git clone https://github.com/alantheprice/coder.git
+cd coder
 
 # Build
 go build -o coder
@@ -129,7 +129,7 @@ The project includes comprehensive testing across multiple dimensions:
 ## Project Structure
 
 ```
-gpt-oss-chat-agent/
+coder/
 ├── main.go                          # CLI entry point with argument parsing
 ├── agent/                           # Core agent logic and orchestration
 │   ├── agent.go                     # Main agent implementation
@@ -308,8 +308,8 @@ We welcome contributions! The project's systematic approach makes it easy to:
 
 ### Development Setup
 ```bash
-git clone https://github.com/your-org/gpt-oss-chat-agent.git
-cd gpt-oss-chat-agent
+git clone https://github.com/alantheprice/coder.git
+cd coder
 go mod tidy
 go build -o coder
 

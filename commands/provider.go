@@ -26,7 +26,7 @@ func (p *ProviderCommand) Description() string {
 // Execute runs the provider command
 func (p *ProviderCommand) Execute(args []string, chatAgent *agent.Agent) error {
 	configManager := chatAgent.GetConfigManager()
-	
+
 	// If no arguments, show current status
 	if len(args) == 0 {
 		return p.showProviderStatus(configManager, chatAgent)
@@ -68,7 +68,7 @@ func (p *ProviderCommand) showProviderStatus(configManager *config.Manager, chat
 		if info.Available {
 			icon = "✅"
 		}
-		
+
 		lastUsedIcon := ""
 		if info.IsLastUsed {
 			lastUsedIcon = " 🌟"
@@ -76,7 +76,7 @@ func (p *ProviderCommand) showProviderStatus(configManager *config.Manager, chat
 
 		fmt.Printf("%s **%s**%s\n", icon, info.Name, lastUsedIcon)
 		fmt.Printf("   Model: %s\n", info.CurrentModel)
-		
+
 		if info.EnvVar != "" {
 			envStatus := "❌ Not set"
 			if info.Available && providerType != api.OllamaClientType {
@@ -107,7 +107,7 @@ func (p *ProviderCommand) showProviderStatus(configManager *config.Manager, chat
 // listProviders shows only available providers
 func (p *ProviderCommand) listProviders(configManager *config.Manager) error {
 	available := configManager.ListAvailableProviders()
-	
+
 	if len(available) == 0 {
 		fmt.Println("❌ No providers are currently available.")
 		fmt.Println("Please set up an API key or start Ollama.")
@@ -129,7 +129,7 @@ func (p *ProviderCommand) listProviders(configManager *config.Manager) error {
 // selectProvider allows interactive provider selection
 func (p *ProviderCommand) selectProvider(configManager *config.Manager, chatAgent *agent.Agent) error {
 	available := configManager.ListAvailableProviders()
-	
+
 	if len(available) == 0 {
 		fmt.Println("❌ No providers are currently available.")
 		fmt.Println("Please set up an API key or start Ollama.")
@@ -142,12 +142,12 @@ func (p *ProviderCommand) selectProvider(configManager *config.Manager, chatAgen
 	for i, provider := range available {
 		name := api.GetProviderName(provider)
 		model := configManager.GetModelForProvider(provider)
-		
+
 		current := ""
 		if provider == chatAgent.GetProviderType() {
 			current = " (current)"
 		}
-		
+
 		fmt.Printf("%d. **%s**%s - %s\n", i+1, name, current, model)
 	}
 
@@ -201,18 +201,23 @@ func (p *ProviderCommand) setProvider(providerName string, configManager *config
 func (p *ProviderCommand) switchToProvider(provider api.ClientType, configManager *config.Manager, chatAgent *agent.Agent) error {
 	// Get the configured model for this provider
 	model := configManager.GetModelForProvider(provider)
-	
+
 	fmt.Printf("🔄 Switching to %s with model %s...\n", api.GetProviderName(provider), model)
-	
+
+	// Persist the provider selection to configuration
+	err := configManager.SetProviderAndModel(provider, model)
+	if err != nil {
+		return fmt.Errorf("failed to persist provider selection: %w", err)
+	}
+
 	// Switch the agent to use the new provider and model immediately
-	err := chatAgent.SetModel(model)
+	err = chatAgent.SetModel(model)
 	if err != nil {
 		return fmt.Errorf("failed to switch to provider %s: %w", api.GetProviderName(provider), err)
 	}
 
 	fmt.Printf("✅ Provider switched to: %s\n", api.GetProviderName(provider))
 	fmt.Printf("🤖 Using model: %s\n", model)
-	fmt.Printf("🟢 Change is active immediately!\n")
 
 	return nil
 }

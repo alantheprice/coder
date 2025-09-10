@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# End-to-End Test Script for GPT-OSS Chat Agent
+# End-to-End Test Script for Coder
 # This script demonstrates full functionality of the chat agent
 
 set -e
 
-echo "🚀 Starting E2E Test for GPT-OSS Chat Agent"
+echo "🚀 Starting E2E Test for Coder"
 echo "============================================="
 
 # Check prerequisites
@@ -142,7 +142,7 @@ fi
 echo ""
 echo "🧪 Test 4: Edit File Tool"
 echo "Testing file modification..."
-../gpt-chat <<< "Use the edit_file tool to modify hello.go. Change the message from 'Hello, World!' to 'Hello, GPT-OSS Chat Agent!'. Then use read_file to verify the change." > test4_output.txt 2>&1 &
+../gpt-chat <<< "Use the edit_file tool to modify hello.go. Change the message from 'Hello, World!' to 'Hello, Coder!'. Then use read_file to verify the change." > test4_output.txt 2>&1 &
 CHAT_PID=$!
 
 sleep 15
@@ -151,7 +151,7 @@ if ps -p $CHAT_PID > /dev/null; then
 fi
 
 # Check if hello.go was modified
-if grep -q "Hello, GPT-OSS Chat Agent!" hello.go; then
+if grep -q "Hello, Coder!" hello.go; then
     echo "✅ Edit file tool test completed - hello.go modified successfully"
     echo "Modified content:"
     cat hello.go | sed 's/^/    /'

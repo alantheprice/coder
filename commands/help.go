@@ -24,7 +24,7 @@ func (h *HelpCommand) Description() string {
 // Execute runs the help command
 func (h *HelpCommand) Execute(args []string, chatAgent *agent.Agent) error {
 	fmt.Println(`
-🤖 GPT-OSS Chat Agent - Slash Commands
+🤖 Coder Agent - Slash Commands
 
 Available slash commands:`)
 
@@ -35,13 +35,16 @@ Available slash commands:`)
 	}
 
 	fmt.Println(`
-🤖 GPT-OSS Chat Agent
+🤖 Coder Agent
 
-A command-line coding assistant using OpenAI's gpt-oss-120b model with 4 core tools:
+A command-line coding assistant using OpenAI's gpt-oss-120b model with 7 core tools:
 - shell_command: Execute shell commands for exploration and testing  
 - read_file: Read file contents
 - write_file: Create new files
 - edit_file: Modify existing files with precise string replacement
+- add_todo: Create and track development tasks
+- update_todo_status: Update progress on tracked tasks
+- list_todos: View all current tasks and their status
 
 USAGE:
   Interactive mode:     ./coder

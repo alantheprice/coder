@@ -170,3 +170,52 @@ The agent includes intelligent conversation optimization (always enabled) that r
 - Always active for optimal performance
 - No configuration required
 - Automatic detection and optimization of redundant content
+
+### Diff System
+
+The agent includes a hybrid diff system that provides superior diff output quality:
+
+**Python Integration (Primary):**
+- Uses Python's `difflib` library when available for professional-grade unified diffs
+- Provides context lines, proper headers, and optimal change detection
+- Supports colored output with ANSI escape codes
+- Automatically handles encoding issues with UTF-8 and error replacement
+
+**Go Fallback (Secondary):**
+- Native Go implementation when Python is unavailable
+- Basic line-by-line change detection
+- Colored output for additions (green) and deletions (red)
+- No external dependencies
+
+**Features:**
+- **Automatic Detection**: Checks for Python availability at runtime
+- **Graceful Fallback**: Seamlessly switches to Go implementation if Python fails
+- **Debug Logging**: Detailed logging in debug mode for troubleshooting
+- **Temporary File Management**: Secure handling of temporary files with automatic cleanup
+- **Line Limits**: Configurable truncation to prevent overwhelming output
+- **Error Handling**: Comprehensive error handling with fallback strategies
+
+**Usage:**
+```go
+agent.ShowColoredDiff(oldContent, newContent, maxLines)
+```
+
+**Benefits:**
+- **Better Quality**: Python difflib provides industry-standard unified diff format
+- **Wide Compatibility**: Works in most environments with Python, falls back gracefully
+- **Enhanced Readability**: Context lines and proper formatting make changes easier to understand
+- **Performance**: Efficient temporary file handling and minimal overhead
+
+**Debug Mode:**
+Enable with `DEBUG=true` environment variable to see:
+- Python availability detection
+- Temporary file operations
+- Fallback decisions
+- Error details
+
+**Testing:**
+Comprehensive test suite covers:
+- Python and Go implementations
+- Edge cases (empty content, large files)
+- Fallback behavior
+- Change detection algorithms
