@@ -160,8 +160,8 @@ func NewAgentWithModel(model string) (*Agent, error) {
 	// Clear old todos at session start
 	tools.ClearTodos()
 
-	// Check if conversation optimization is enabled
-	optimizationEnabled := os.Getenv("CONVERSATION_OPTIMIZATION") == "true" || os.Getenv("CONVERSATION_OPTIMIZATION") == "1"
+	// Conversation optimization is always enabled
+	optimizationEnabled := true
 
 	return &Agent{
 		client:        client,
@@ -771,12 +771,23 @@ func (a *Agent) PrintConversationSummary() {
 		fmt.Println("🔄 Conversation Optimization")
 		fmt.Println("──────────────────────────────")
 		fmt.Printf("📁 Files tracked:     %d\n", stats["tracked_files"])
+		fmt.Printf("⚡ Commands tracked:  %d\n", stats["tracked_commands"])
+		
 		if trackedFiles, ok := stats["file_paths"].([]string); ok && len(trackedFiles) > 0 {
 			if len(trackedFiles) <= 3 {
 				fmt.Printf("📂 Tracked files:     %s\n", strings.Join(trackedFiles, ", "))
 			} else {
 				fmt.Printf("📂 Tracked files:     %s, +%d more\n", 
 					strings.Join(trackedFiles[:2], ", "), len(trackedFiles)-2)
+			}
+		}
+		
+		if trackedCommands, ok := stats["shell_commands"].([]string); ok && len(trackedCommands) > 0 {
+			if len(trackedCommands) <= 3 {
+				fmt.Printf("🔧 Tracked commands:  %s\n", strings.Join(trackedCommands, ", "))
+			} else {
+				fmt.Printf("🔧 Tracked commands:  %s, +%d more\n", 
+					strings.Join(trackedCommands[:2], ", "), len(trackedCommands)-2)
 			}
 		}
 	}
@@ -1041,6 +1052,7 @@ func (a *Agent) ClearConversationHistory() {
 }
 
 // SetConversationOptimization enables or disables conversation optimization
+// Note: Optimization is always enabled by default for optimal performance
 func (a *Agent) SetConversationOptimization(enabled bool) {
 	a.optimizer.SetEnabled(enabled)
 	if a.debug {
