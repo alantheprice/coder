@@ -19,6 +19,17 @@ type TaskAction struct {
 	Details     string // Additional details like file path, command, etc.
 }
 
+// ShellCommandResult tracks shell command execution for deduplication
+type ShellCommandResult struct {
+	Command         string // The command that was run
+	FullOutput      string // Complete output (for future reference)
+	TruncatedOutput string // Truncated output (what was shown)
+	Error           error  // Any error that occurred
+	ExecutedAt      int64  // Unix timestamp
+	MessageIndex    int    // Index in messages array where this result appears
+	WasTruncated    bool   // Whether output was truncated
+}
+
 // AgentState represents the state of an agent that can be persisted
 type AgentState struct {
 	Messages        []api.Message `json:"messages"`
@@ -50,6 +61,7 @@ type Agent struct {
 	currentContextTokens  int          // Current context size being sent to model
 	maxContextTokens      int          // Model's maximum context window
 	contextWarningIssued  bool         // Whether we've warned about approaching context limit
+	shellCommandHistory   map[string]*ShellCommandResult // Track shell commands for deduplication
 }
 
 // debugLog logs a message only if debug mode is enabled
@@ -237,6 +249,78 @@ func (a *Agent) findChanges(oldLines, newLines []string) []DiffChange {
 	return changes
 }
 
+// executeShellCommandWithTruncation handles shell command execution with smart truncation and deduplication
+func (a *Agent) executeShellCommandWithTruncation(command string) (string, error) {
+	const maxOutputLength = 20000 // 20K character limit
+	
+	// Check if we've run this exact command before
+	if prevResult, exists := a.shellCommandHistory[command]; exists {
+		// Command was run before - update the previous message to be brief and show full result in current response
+		a.updatePreviousShellCommandMessage(prevResult)
+		
+		// Return the full output (will be truncated if needed)
+		if prevResult.Error != nil {
+			return prevResult.FullOutput, prevResult.Error
+		}
+		
+		// If output is still too long, truncate it but mention it's a repeated command
+		output := prevResult.FullOutput
+		if len(output) > maxOutputLength {
+			truncated := output[:maxOutputLength]
+			return truncated + fmt.Sprintf("\n\n... (output truncated at %d chars - repeated command, full output was %d chars)", maxOutputLength, len(output)), nil
+		}
+		return output, nil
+	}
+	
+	// Execute the command for the first time
+	a.ToolLog("executing command", command)
+	a.debugLog("Executing shell command: %s\n", command)
+	
+	fullResult, err := tools.ExecuteShellCommand(command)
+	a.debugLog("Shell command result: %s, error: %v\n", fullResult, err)
+	
+	// Determine what to return (truncated or full)
+	var returnResult string
+	var wasTruncated bool
+	
+	if len(fullResult) > maxOutputLength {
+		returnResult = fullResult[:maxOutputLength] + fmt.Sprintf("\n\n... (output truncated at %d chars, full output was %d chars)", maxOutputLength, len(fullResult))
+		wasTruncated = true
+	} else {
+		returnResult = fullResult
+		wasTruncated = false
+	}
+	
+	// Store in history for potential deduplication
+	a.shellCommandHistory[command] = &ShellCommandResult{
+		Command:         command,
+		FullOutput:      fullResult,
+		TruncatedOutput: returnResult,
+		Error:           err,
+		ExecutedAt:      time.Now().Unix(),
+		MessageIndex:    len(a.messages), // Will be the next message index
+		WasTruncated:    wasTruncated,
+	}
+	
+	return returnResult, err
+}
+
+// updatePreviousShellCommandMessage updates a previous shell command message to be brief
+func (a *Agent) updatePreviousShellCommandMessage(prevResult *ShellCommandResult) {
+	// Find the message in the conversation history
+	if prevResult.MessageIndex >= 0 && prevResult.MessageIndex < len(a.messages) {
+		msg := &a.messages[prevResult.MessageIndex]
+		
+		// Update the message content to be brief
+		briefMessage := fmt.Sprintf("Tool result for shell_command (repeated): %s\n\n[This command was run again - see latest execution below for full output]", prevResult.Command)
+		
+		// Update the message content
+		if msg.Role == "user" && strings.Contains(msg.Content, "Tool call result for shell_command") {
+			msg.Content = briefMessage
+		}
+	}
+}
+
 func NewAgent() (*Agent, error) {
 	return NewAgentWithModel("")
 }
@@ -299,15 +383,16 @@ func NewAgentWithModel(model string) (*Agent, error) {
 	optimizationEnabled := true
 
 	agent := &Agent{
-		client:        client,
-		messages:      []api.Message{},
-		systemPrompt:  systemPrompt,
-		maxIterations: 100,
-		totalCost:     0.0,
-		clientType:    clientType,
-		debug:         debug,
-		optimizer:     NewConversationOptimizer(optimizationEnabled, debug),
-		configManager: configManager,
+		client:              client,
+		messages:            []api.Message{},
+		systemPrompt:        systemPrompt,
+		maxIterations:       100,
+		totalCost:           0.0,
+		clientType:          clientType,
+		debug:               debug,
+		optimizer:           NewConversationOptimizer(optimizationEnabled, debug),
+		configManager:       configManager,
+		shellCommandHistory: make(map[string]*ShellCommandResult),
 	}
 	
 	// Initialize context limits based on model
@@ -602,11 +687,7 @@ func (a *Agent) executeTool(toolCall api.ToolCall) (string, error) {
 				return "", fmt.Errorf("invalid command argument")
 			}
 		}
-		a.ToolLog("executing command", command)
-		a.debugLog("Executing shell command: %s\n", command)
-		result, err := tools.ExecuteShellCommand(command)
-		a.debugLog("Shell command result: %s, error: %v\n", result, err)
-		return result, err
+		return a.executeShellCommandWithTruncation(command)
 
 	case "read_file":
 		filePath, ok := args["file_path"].(string)
